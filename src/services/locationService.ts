@@ -37,7 +37,6 @@ import {
   ERBIL_NPC_HUB_COORDS,
   BOT_NAME_POOL,
 } from '../data/bots'
-import { citadelCoords, isProtectedAccount } from '../data/protectedPlayers'
 
 export {
   BOT_UID_PREFIX,
@@ -113,10 +112,8 @@ export async function updatePlayerLocation(
     isBot?: boolean
   },
 ) {
-  const protectedAcc = isProtectedAccount({ uid, playerId: data.playerId })
-  const anchor = citadelCoords()
-  const lat = protectedAcc ? anchor.lat : data.lat
-  const lng = protectedAcc ? anchor.lng : data.lng
+  const lat = data.lat
+  const lng = data.lng
   const payload: Record<string, unknown> = {
     uid,
     name: data.name,
@@ -191,11 +188,6 @@ function parseLocationDoc(docSnapId: string, data: Record<string, unknown>): Pla
       ? data.uid
       : docSnapId
   const playerId = typeof data.playerId === 'string' ? data.playerId.trim() : ''
-  if (isProtectedAccount({ uid, playerId })) {
-    const a = citadelCoords()
-    lat = a.lat
-    lng = a.lng
-  }
   const isBot = data.isBot === true || isBotPlayerUid(uid) || isBotPlayerUid(docSnapId)
   // Null-safe avatar3d — bots always get a complete DEFAULT so modal never crashes
   let avatar3d: Avatar3DCustomization | null = null

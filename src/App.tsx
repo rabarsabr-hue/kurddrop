@@ -38,7 +38,6 @@ import {
 } from './data/gifts'
 
 import {
-  citadelCoords,
   isProtectedAccount,
   lockProtectedWallet,
   PROTECTED_LOCKED_GOLD,
@@ -2312,23 +2311,15 @@ export default function App() {
 
     const cos = cosmeticsToPublic(boughtItemsRef.current)
 
-    const protectedSelf = isProtectedAccount({ uid, playerId: profile.playerId })
-    const syncLat = protectedSelf ? citadelCoords().lat : lat
-    const syncLng = protectedSelf ? citadelCoords().lng : lng
-    if (protectedSelf) {
-      userLatRef.current = syncLat
-      userLngRef.current = syncLng
-    }
-
     updatePlayerLocation(uid, {
 
       name: profile.name,
 
       gender: profile.gender,
 
-      lat: syncLat,
+      lat,
 
-      lng: syncLng,
+      lng,
 
       isOnline: true,
 
@@ -7496,13 +7487,6 @@ export default function App() {
   }, [])
 
   const applyGpsPosition = useCallback((lat: number, lng: number, sync = true, forceSync = false) => {
-
-    const profilePid = userProfileRef.current?.playerId
-    if (isProtectedAccount({ uid: userIdRef.current, playerId: profilePid })) {
-      const a = citadelCoords()
-      lat = a.lat
-      lng = a.lng
-    }
 
     const prevLat = userLatRef.current, prevLng = userLngRef.current
 
