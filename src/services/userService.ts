@@ -2372,6 +2372,11 @@ export async function purchaseMarketItem(
     return {
       name: String(data.name ?? 'یاریزان'),
       username: typeof data.username === 'string' ? data.username : '',
+      email: typeof data.email === 'string' ? data.email.trim().toLowerCase() : '',
+      phone: typeof data.phone === 'string' ? data.phone.trim() : '',
+      usernameEditUsed: data.usernameEditUsed === true,
+      emailEditUsed: data.emailEditUsed === true,
+      phoneEditUsed: data.phoneEditUsed === true,
       gender: (data.gender === 'female' ? 'female' : 'male') as Gender,
       gold,
       diamond,
@@ -2422,7 +2427,15 @@ export async function purchaseMarketItem(
       name: result.name,
     }).catch(err => console.error('Player purchase sync failed:', err))
   }
-  const withId = { ...result, playerId }
+  const withId: FullUserData = {
+    ...result,
+    playerId,
+    email: result.email || '',
+    phone: result.phone || '',
+    usernameEditUsed: result.usernameEditUsed === true,
+    emailEditUsed: result.emailEditUsed === true,
+    phoneEditUsed: result.phoneEditUsed === true,
+  }
   cacheFromFullUser(uid, withId)
   return withId
 }
