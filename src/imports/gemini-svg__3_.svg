@@ -1,0 +1,58 @@
+<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- ڕەنگەکانی کاغەزی ٢٥ هەزاری (سوور/پەمەیی تاریک) -->
+    <linearGradient id="iqd25-top" x1="50" y1="30" x2="50" y2="70" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EF9A9A"/>
+      <stop offset="1" stop-color="#C62828"/>
+    </linearGradient>
+    <linearGradient id="iqd25-left" x1="30" y1="50" x2="30" y2="85" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#880E4F"/>
+      <stop offset="1" stop-color="#4A0024"/>
+    </linearGradient>
+    <linearGradient id="iqd25-right" x1="70" y1="50" x2="70" y2="85" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B71C1C"/>
+      <stop offset="1" stop-color="#880E4F"/>
+    </linearGradient>
+
+    <!-- سێبەری دەستە پارەکان -->
+    <filter id="shadow-cash" x="-20" y="-20" width="200" height="200" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="5" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+
+    <!-- قاڵبی دەستەی ٢٥ هەزاری -->
+    <g id="bundle-25k">
+      <!-- ڕووی سەرەوەی پارەکە -->
+      <path d="M50 30 L 90 50 L 50 70 L 10 50 Z" fill="url(#iqd25-top)"/>
+      <path d="M50 30 L 90 50 L 50 70 L 10 50 Z" stroke="#FFCDD2" stroke-width="1.5"/>
+      
+      <!-- لای چەپ و ڕاستی پارەکە (قەبارە/ئەستووری) -->
+      <path d="M10 50 L 50 70 L 50 85 L 10 65 Z" fill="url(#iqd25-left)"/>
+      <path d="M50 70 L 90 50 L 90 65 L 50 85 Z" fill="url(#iqd25-right)"/>
+      
+      <!-- هێڵەکانی نێوان کاغەزەکانی دەستە پارەکە -->
+      <path d="M10 55 L 50 75 M10 60 L 50 80" stroke="#4A0024" stroke-width="1.5" stroke-opacity="0.6"/>
+      <path d="M50 75 L 90 55 M50 80 L 90 60" stroke="#4A0024" stroke-width="1.5" stroke-opacity="0.6"/>
+      
+      <!-- نەخشی سەر کاغەزەکە بە کاڵی -->
+      <path d="M 50 38 L 68 47 L 50 56 L 32 47 Z" fill="#FFFFFF" fill-opacity="0.25"/>
+      <path d="M 45 44 L 55 49 L 50 51.5 L 40 46.5 Z" fill="#FFFFFF" fill-opacity="0.4"/>
+      
+      <!-- قایشی بەستنەوەی پارەکە (کاغەزی سپی) -->
+      <path d="M 35 62.5 L 75 42.5 L 80 45 L 40 65 Z" fill="#F8FAFC"/>
+      <path d="M 35 62.5 L 40 65 L 40 80 L 35 77.5 Z" fill="#CBD5E1"/>
+      
+      <!-- هێڵێکی سووری کاڵ لەسەر قایشەکە وەک مۆری بانک -->
+      <path d="M 37.5 61.25 L 77.5 41.25 L 78.5 41.75 L 38.5 61.75 Z" fill="#EF4444"/>
+    </g>
+  </defs>
+
+  <!-- دانانی دەستەی یەکەم لە پشتی چەپ -->
+  <use href="#bundle-25k" transform="translate(0, 15) scale(0.75)" filter="url(#shadow-cash)"/>
+  
+  <!-- دانانی دەستەی دووەم لە پشتی ڕاست -->
+  <use href="#bundle-25k" transform="translate(80, 15) scale(0.75)" filter="url(#shadow-cash)"/>
+  
+  <!-- دانانی دەستەی سێیەم لە پێشەوە کە گەورەتر و ڕوونترە -->
+  <use href="#bundle-25k" transform="translate(25, 45) scale(1.05)" filter="url(#shadow-cash)"/>
+
+</svg>

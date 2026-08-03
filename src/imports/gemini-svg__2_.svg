@@ -1,0 +1,42 @@
+<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="d-grad-1" x1="20" y1="12" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00F0FF"/>
+      <stop offset="1" stop-color="#0055FF"/>
+    </linearGradient>
+    <linearGradient id="d-grad-2" x1="42" y1="12" x2="86" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E0FFFF"/>
+      <stop offset="1" stop-color="#0099FF"/>
+    </linearGradient>
+    <filter id="d-glow" x="-20" y="-20" width="200" height="200" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#00F0FF" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- ئەڵماسی پشتەوە لای چەپ -->
+  <g transform="translate(-15, 0) scale(0.65)" filter="url(#d-glow)">
+    <path d="M64 12L108 48L64 112L20 48L64 12Z" fill="url(#d-grad-1)"/>
+    <path d="M64 12L86 48L64 112L42 48L64 12Z" fill="url(#d-grad-2)"/>
+    <path d="M42 48L86 48" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.6"/>
+    <path d="M64 12L64 112" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.4"/>
+    <path d="M20 48L108 48" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.8"/>
+  </g>
+
+  <!-- ئەڵماسی پشتەوە لای ڕاست -->
+  <g transform="translate(60, 0) scale(0.65)" filter="url(#d-glow)">
+    <path d="M64 12L108 48L64 112L20 48L64 12Z" fill="url(#d-grad-1)"/>
+    <path d="M64 12L86 48L64 112L42 48L64 12Z" fill="url(#d-grad-2)"/>
+    <path d="M42 48L86 48" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.6"/>
+    <path d="M64 12L64 112" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.4"/>
+    <path d="M20 48L108 48" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.8"/>
+  </g>
+
+  <!-- ئەڵماسی پێشەوە (گەورەتر) -->
+  <g transform="translate(15, 30) scale(0.9)" filter="url(#d-glow)">
+    <path d="M64 12L108 48L64 112L20 48L64 12Z" fill="url(#d-grad-1)"/>
+    <path d="M64 12L86 48L64 112L42 48L64 12Z" fill="url(#d-grad-2)"/>
+    <path d="M42 48L86 48" stroke="#FFFFFF" stroke-width="2.5" stroke-opacity="0.7"/>
+    <path d="M64 12L64 112" stroke="#FFFFFF" stroke-width="2.5" stroke-opacity="0.5"/>
+    <path d="M20 48L108 48" stroke="#FFFFFF" stroke-width="2.5" stroke-opacity="0.9"/>
+  </g>
+</svg>

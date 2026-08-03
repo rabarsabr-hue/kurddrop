@@ -1,0 +1,43 @@
+<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="gold-base" x1="50%" y1="50%" x2="50%" y2="100%">
+      <stop stop-color="#D97706"/>
+      <stop offset="1" stop-color="#92400E"/>
+    </linearGradient>
+    <linearGradient id="gold-top" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop stop-color="#FEF08A"/>
+      <stop offset="0.5" stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#B45309"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="200" height="200" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="8" stdDeviation="6" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- قالبی خوارەوە لای چەپ -->
+  <g transform="translate(-10, 30) scale(0.8)" filter="url(#shadow)">
+    <path d="M16 80L36 40H92L112 80V96C112 100.418 108.418 104 104 104H24C19.5817 104 16 100.418 16 96V80Z" fill="url(#gold-base)"/>
+    <path d="M36 40H92L112 80H16L36 40Z" fill="url(#gold-top)"/>
+    <path d="M36 40L16 80" stroke="#FFF7B0" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M92 40L112 80" stroke="#FFF7B0" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M36 40H92" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- قالبی خوارەوە لای ڕاست -->
+  <g transform="translate(50, 30) scale(0.8)" filter="url(#shadow)">
+    <path d="M16 80L36 40H92L112 80V96C112 100.418 108.418 104 104 104H24C19.5817 104 16 100.418 16 96V80Z" fill="url(#gold-base)"/>
+    <path d="M36 40H92L112 80H16L36 40Z" fill="url(#gold-top)"/>
+    <path d="M36 40L16 80" stroke="#FFF7B0" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M92 40L112 80" stroke="#FFF7B0" stroke-width="2.5" stroke-linecap="round"/>
+    <path d="M36 40H92" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- قالبی سەرەوە (پێشەوە) -->
+  <g transform="translate(20, -10) scale(0.85)" filter="url(#shadow)">
+    <path d="M16 80L36 40H92L112 80V96C112 100.418 108.418 104 104 104H24C19.5817 104 16 100.418 16 96V80Z" fill="url(#gold-base)"/>
+    <path d="M36 40H92L112 80H16L36 40Z" fill="url(#gold-top)"/>
+    <path d="M36 40L16 80" stroke="#FFF7B0" stroke-width="3" stroke-linecap="round"/>
+    <path d="M92 40L112 80" stroke="#FFF7B0" stroke-width="3" stroke-linecap="round"/>
+    <path d="M36 40H92" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

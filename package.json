@@ -1,0 +1,40 @@
+{
+  "name": "kurd-drop",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5174",
+    "dev:lan": "vite --host 0.0.0.0 --port 5174",
+    "dev:server": "npm --prefix server run dev",
+    "server": "npm --prefix server start",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "allow-lan": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/allow-lan-firewall.ps1"
+  },
+  "dependencies": {
+    "firebase": "^12.16.0",
+    "leaflet": "^1.9.4",
+    "leaflet.markercluster": "^1.5.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.25.0",
+    "@types/leaflet": "^1.9.17",
+    "@types/leaflet.markercluster": "^1.5.6",
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "eslint": "^9.25.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.19",
+    "globals": "^16.0.0",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "^8.30.1",
+    "vite": "^6.3.5"
+  }
+}
