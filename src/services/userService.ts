@@ -524,7 +524,7 @@ const DEFAULT_TITLE = 'ڕاوکەر'
 export const WELCOME_BONUS_GOLD = 500
 export const WELCOME_BONUS_DIAMOND = 25
 /** دەبێت لەگەڵ LEADERBOARD_EPOCH بگونجێت (leaderboardService) */
-export const GAMEPLAY_LEADERBOARD_EPOCH = 3
+export const GAMEPLAY_LEADERBOARD_EPOCH = 4
 /** وەشانی ڕیسێتی گشتی — نابێت دووبارە داخڵبوون باڵانس سفر بکاتەوە */
 export const GLOBAL_GAMEPLAY_RESET_VERSION = 4
 export const ACCOUNT_GAMEPLAY_RESET_VERSION = GLOBAL_GAMEPLAY_RESET_VERSION
@@ -944,11 +944,17 @@ function mergePlayerProgressIntoUser(
       : base.playerId,
     name: base.username
       ? base.name
-      : (typeof playerData.name === 'string' && playerData.name.trim()
+      : (typeof playerData.name === 'string' && playerData.name.trim() && playerData.name.trim() !== 'یاریزان'
         ? playerData.name
         : base.name),
     username: base.username
       || (typeof playerData.username === 'string' ? playerData.username : ''),
+    email: base.email
+      || (typeof playerData.email === 'string' ? playerData.email : ''),
+    phone: base.phone
+      || (typeof playerData.phone === 'string' ? playerData.phone : ''),
+    gender: base.gender
+      || (playerData.gender === 'female' ? 'female' as const : playerData.gender === 'male' ? 'male' as const : base.gender),
     inventory: playerData.inventory != null ? parseInventory(playerData.inventory) : base.inventory,
     dropsOpenedByType: playerData.dropsOpenedByType != null
       ? parseDropsOpenedByType(playerData.dropsOpenedByType)
@@ -1544,8 +1550,213 @@ async function reserveUniqueUsername(uid: string, username: string, email: strin
 
 /** لە کاتی تۆمارکردندا — ڕێگری لە دروستکردنی پرۆفایلی بەتاڵ لەلایەن getOrCreateUser */
 export const REG_INFLIGHT_KEY = 'kd_reg_inflight'
+const PENDING_REG_PROFILE_KEY = 'kd_pending_reg_profile'
+const REG_INTENT_KEY = 'kd_reg_intent'
+const LOCKED_IDENTITY_PREFIX = 'kd_locked_identity_'
+
+export type RegistrationIdentity = {
+  name: string
+  username: string
+  email: string
+  phone: string
+  gender: Gender
+  playerId?: string
+  createdAtMs?: number
+}
+
+let pendingRegisteredProfile: { uid: string; data: FullUserData } | null = null
+/** لە بیرگە — sessionStorage لە هەندێک وێبگەڕدا کارناکات */
+let registrationInflightMemory = false
+/** فۆرمی تۆمارکردن پێش Auth — بۆ UI و ڕێگری لە یاریزان */
+let registrationIntentMemory: RegistrationIdentity | null = null
+
+function lockedIdentityStorageKey(uid: string): string {
+  return `${LOCKED_IDENTITY_PREFIX}${uid}`
+}
+
+function readIdentityPayload(raw: unknown): RegistrationIdentity | null {
+  if (!raw || typeof raw !== 'object') return null
+  const d = raw as Record<string, unknown>
+  const username = typeof d.username === 'string' ? normalizeUsername(d.username) : ''
+  const email = typeof d.email === 'string' ? d.email.trim().toLowerCase() : ''
+  const name = typeof d.name === 'string' ? d.name.trim() : ''
+  const phone = typeof d.phone === 'string' ? d.phone.trim() : ''
+  if (!username && !email) return null
+  return {
+    name: name || username,
+    username,
+    email,
+    phone,
+    gender: d.gender === 'female' ? 'female' : 'male',
+    playerId: typeof d.playerId === 'string' ? d.playerId : undefined,
+    createdAtMs: typeof d.createdAtMs === 'number' ? d.createdAtMs : undefined,
+  }
+}
+
+/** پێش createUser — ناسنامە لە فۆرم قوفڵ بکە تا bootstrap «یاریزان» دروست نەکات */
+export function lockRegistrationIntent(opts: {
+  fullName: string
+  username: string
+  email: string
+  phone: string
+  gender: Gender
+}): RegistrationIdentity {
+  const identity: RegistrationIdentity = {
+    name: opts.fullName.trim(),
+    username: normalizeUsername(opts.username),
+    email: opts.email.trim().toLowerCase(),
+    phone: normalizePhoneKey(opts.phone),
+    gender: opts.gender === 'female' ? 'female' : 'male',
+    createdAtMs: Date.now(),
+  }
+  registrationIntentMemory = identity
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(REG_INTENT_KEY, JSON.stringify(identity))
+    }
+  } catch { /* ignore */ }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(REG_INTENT_KEY, JSON.stringify(identity))
+    }
+  } catch { /* ignore */ }
+  try {
+    if (typeof window !== 'undefined') {
+      ;(window as unknown as { __KD_REG_INTENT__?: RegistrationIdentity }).__KD_REG_INTENT__ = identity
+    }
+  } catch { /* ignore */ }
+  return identity
+}
+
+export function peekRegistrationIntent(): RegistrationIdentity | null {
+  if (registrationIntentMemory?.username || registrationIntentMemory?.email) {
+    return registrationIntentMemory
+  }
+  try {
+    if (typeof window !== 'undefined') {
+      const w = (window as unknown as { __KD_REG_INTENT__?: RegistrationIdentity }).__KD_REG_INTENT__
+      const parsed = readIdentityPayload(w)
+      if (parsed) {
+        registrationIntentMemory = parsed
+        return parsed
+      }
+    }
+  } catch { /* ignore */ }
+  for (const store of [sessionStorage, localStorage]) {
+    try {
+      if (typeof store === 'undefined') continue
+      const raw = store.getItem(REG_INTENT_KEY)
+      if (!raw) continue
+      const parsed = readIdentityPayload(JSON.parse(raw))
+      if (parsed) {
+        registrationIntentMemory = parsed
+        return parsed
+      }
+    } catch { /* ignore */ }
+  }
+  return null
+}
+
+/** دوای دروستبوونی uid — ناسنامە بۆ هەمیشە لە localStorage بمێنێتەوە */
+export function bindRegistrationIdentityToUid(
+  uid: string,
+  identity?: RegistrationIdentity | null,
+): RegistrationIdentity | null {
+  if (!uid) return null
+  const base = identity ?? peekRegistrationIntent()
+  if (!base || (!base.username && !base.email)) return getLockedIdentity(uid)
+  const locked: RegistrationIdentity = {
+    ...base,
+    createdAtMs: base.createdAtMs ?? Date.now(),
+  }
+  registrationIntentMemory = locked
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(lockedIdentityStorageKey(uid), JSON.stringify(locked))
+      localStorage.setItem(REG_INTENT_KEY, JSON.stringify({ ...locked, uid }))
+    }
+  } catch { /* ignore */ }
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(REG_INTENT_KEY, JSON.stringify({ ...locked, uid }))
+      sessionStorage.setItem(PENDING_REG_PROFILE_KEY, JSON.stringify({ uid, ...locked }))
+    }
+  } catch { /* ignore */ }
+  try {
+    if (typeof window !== 'undefined') {
+      ;(window as unknown as { __KD_REG_INTENT__?: RegistrationIdentity }).__KD_REG_INTENT__ = locked
+      ;(window as unknown as { __KD_LOCKED_IDENTITY__?: Record<string, RegistrationIdentity> }).__KD_LOCKED_IDENTITY__ = {
+        ...((window as unknown as { __KD_LOCKED_IDENTITY__?: Record<string, RegistrationIdentity> }).__KD_LOCKED_IDENTITY__ ?? {}),
+        [uid]: locked,
+      }
+    }
+  } catch { /* ignore */ }
+  return locked
+}
+
+export function getLockedIdentity(uid: string): RegistrationIdentity | null {
+  if (!uid) return null
+  try {
+    if (typeof window !== 'undefined') {
+      const map = (window as unknown as { __KD_LOCKED_IDENTITY__?: Record<string, RegistrationIdentity> }).__KD_LOCKED_IDENTITY__
+      const fromWin = readIdentityPayload(map?.[uid])
+      if (fromWin) return fromWin
+    }
+  } catch { /* ignore */ }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(lockedIdentityStorageKey(uid))
+      if (raw) {
+        const parsed = readIdentityPayload(JSON.parse(raw))
+        if (parsed) return parsed
+      }
+    }
+  } catch { /* ignore */ }
+  // تەنها لە کاتی تۆمارکردنی هەمان کات — intent گشتی
+  if (isRegistrationInflight() || registrationInflightMemory) {
+    const intent = peekRegistrationIntent()
+    if (intent && (intent.email || intent.username)) return intent
+  }
+  return null
+}
+
+export function applyLockedIdentity<T extends {
+  name?: string
+  username?: string
+  email?: string
+  phone?: string
+  gender?: Gender
+  createdAtMs?: number | null
+}>(uid: string, data: T): T {
+  const locked = getLockedIdentity(uid)
+  if (!locked) return data
+  const nextName = locked.name?.trim() && locked.name !== 'یاریزان'
+    ? locked.name.trim()
+    : (typeof data.name === 'string' && data.name.trim() && data.name !== 'یاریزان' ? data.name : locked.name || data.name)
+  return {
+    ...data,
+    name: nextName || locked.username || data.name,
+    username: locked.username || data.username || '',
+    email: locked.email || data.email || '',
+    phone: locked.phone || data.phone || '',
+    gender: locked.gender || data.gender || 'male',
+    createdAtMs: data.createdAtMs ?? locked.createdAtMs ?? null,
+  }
+}
+
+export function clearRegistrationIntent(): void {
+  registrationIntentMemory = null
+  try { sessionStorage?.removeItem(REG_INTENT_KEY) } catch { /* ignore */ }
+  try { localStorage?.removeItem(REG_INTENT_KEY) } catch { /* ignore */ }
+  try {
+    if (typeof window !== 'undefined') {
+      delete (window as unknown as { __KD_REG_INTENT__?: RegistrationIdentity }).__KD_REG_INTENT__
+    }
+  } catch { /* ignore */ }
+}
 
 export function setRegistrationInflight(on: boolean): void {
+  registrationInflightMemory = on
   try {
     if (typeof sessionStorage === 'undefined') return
     if (on) sessionStorage.setItem(REG_INFLIGHT_KEY, '1')
@@ -1553,12 +1764,283 @@ export function setRegistrationInflight(on: boolean): void {
   } catch { /* ignore */ }
 }
 
-function isRegistrationInflight(): boolean {
+export function isRegistrationInflight(): boolean {
+  if (registrationInflightMemory) return true
   try {
     return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(REG_INFLIGHT_KEY) === '1'
   } catch {
     return false
   }
+}
+
+/** تۆمارکردن یان ناسنامەی قوفڵکراو هەیە — دروستکردنی یاریزان قەدەغە */
+export function shouldBlockGuestProfile(uid?: string): boolean {
+  if (isRegistrationInflight()) return true
+  if (peekRegistrationIntent()) return true
+  if (uid && getLockedIdentity(uid)) return true
+  return false
+}
+
+/** چاوەڕوانی تەواوبوونی تۆمارکردن یان گەیشتنی پرۆفایلی تەواو */
+export async function waitForRegisteredIdentity(
+  uid: string,
+  timeoutMs = 25_000,
+): Promise<FullUserData | null> {
+  const started = Date.now()
+  let delay = 50
+  while (Date.now() - started < timeoutMs) {
+    const locked = getLockedIdentity(uid)
+    if (locked?.username?.trim() && locked.email?.trim()) {
+      const pending = peekPendingRegisteredProfile(uid)
+      if (pending && pending.username?.trim()) {
+        return applyLockedIdentity(uid, pending) as FullUserData
+      }
+      // ناسنامەی فۆرم بەسە بۆ UI — تەنانەت پێش نووسینی Firestore
+      return applyLockedIdentity(uid, {
+        ...(pending ?? createDefaultProfile()),
+        name: locked.name,
+        username: locked.username,
+        email: locked.email,
+        phone: locked.phone,
+        gender: locked.gender,
+        createdAtMs: locked.createdAtMs ?? Date.now(),
+        playerId: locked.playerId || pending?.playerId || '',
+      } as FullUserData) as FullUserData
+    }
+    const pending = peekPendingRegisteredProfile(uid)
+    if (pending && pending.username?.trim() && pending.email?.trim()) {
+      return applyLockedIdentity(uid, pending) as FullUserData
+    }
+    try {
+      const snap = await getDoc(doc(db, 'users', uid))
+      if (snap.exists()) {
+        const parsed = applyLockedIdentity(uid, parseFullUserData(snap.data() as Record<string, unknown>))
+        if (!isIdentityIncomplete(parsed)) return parsed as FullUserData
+      }
+    } catch { /* ignore */ }
+    // هەرگیز زوو مەوەستە ئەگەر تۆمارکردن/intent هێشتا هەیە
+    if (!isRegistrationInflight() && !peekRegistrationIntent() && !getLockedIdentity(uid)) {
+      if (Date.now() - started > 3_000) break
+    }
+    await new Promise(r => setTimeout(r, delay))
+    delay = Math.min(300, Math.floor(delay * 1.25))
+  }
+  const last = peekPendingRegisteredProfile(uid)
+  if (last) return applyLockedIdentity(uid, last) as FullUserData
+  const locked = getLockedIdentity(uid)
+  if (locked?.username) {
+    return applyLockedIdentity(uid, {
+      ...createDefaultProfile(),
+      name: locked.name,
+      username: locked.username,
+      email: locked.email,
+      phone: locked.phone,
+      gender: locked.gender,
+      createdAtMs: locked.createdAtMs ?? Date.now(),
+      playerId: locked.playerId || '',
+    } as FullUserData) as FullUserData
+  }
+  return null
+}
+
+/** نووسینەوەی ناسنامە بۆ Firestore ئەگەر پرۆفایلی بەتاڵ/یاریزان زاڵ بوو */
+export async function repairUserIdentity(
+  uid: string,
+  identity: {
+    name: string
+    username: string
+    email: string
+    phone: string
+    gender: Gender
+    playerId?: string
+  },
+): Promise<void> {
+  const name = identity.name.trim()
+  const username = normalizeUsername(identity.username)
+  const email = identity.email.trim().toLowerCase()
+  const phone = identity.phone.trim()
+  if (!uid || !username || !email) return
+  const ref = doc(db, 'users', uid)
+  const patch: Record<string, unknown> = {
+    name: name || username,
+    username,
+    email,
+    phone,
+    gender: identity.gender === 'female' ? 'female' : 'male',
+    updatedAt: serverTimestamp(),
+  }
+  await setDoc(ref, patch, { merge: true })
+  const playerId = (identity.playerId || '').trim() || (await resolvePlayerId(uid).catch(() => ''))
+  if (playerId) {
+    await setDoc(doc(db, 'players', playerId), {
+      uid,
+      playerId,
+      name: name || username,
+      username,
+      email,
+      phone,
+      gender: patch.gender,
+      updatedAt: serverTimestamp(),
+    }, { merge: true }).catch(() => {})
+  }
+  try {
+    await reserveUniqueUsername(uid, username, email)
+  } catch { /* already owned by this uid ok */ }
+  if (phone) {
+    try { await upsertPhoneIndex(uid, phone, email) } catch { /* ignore */ }
+  }
+}
+
+/** دوای تۆمارکردن — App دەستبەجێ پرۆفایلی ڕاستەقینە دەخوێنێتەوە */
+export function stashPendingRegisteredProfile(uid: string, data: FullUserData): void {
+  const withLock = applyLockedIdentity(uid, data) as FullUserData
+  pendingRegisteredProfile = { uid, data: withLock }
+  bindRegistrationIdentityToUid(uid, {
+    name: withLock.name,
+    username: withLock.username,
+    email: withLock.email,
+    phone: withLock.phone,
+    gender: withLock.gender,
+    playerId: withLock.playerId,
+    createdAtMs: withLock.createdAtMs ?? Date.now(),
+  })
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(PENDING_REG_PROFILE_KEY, JSON.stringify({
+        uid,
+        name: withLock.name,
+        username: withLock.username,
+        email: withLock.email,
+        phone: withLock.phone,
+        gender: withLock.gender,
+        playerId: withLock.playerId,
+        gold: withLock.gold,
+        diamond: withLock.diamond,
+        isPremium: withLock.isPremium,
+        playerLevel: withLock.playerLevel,
+        playerXp: withLock.playerXp,
+        hunterLevel: withLock.hunterLevel,
+        title: withLock.title,
+        avatarUrl: withLock.avatarUrl,
+        avatar3d: withLock.avatar3d,
+        createdAtMs: withLock.createdAtMs,
+        giftsSentScore: withLock.giftsSentScore,
+        usernameEditUsed: withLock.usernameEditUsed,
+        emailEditUsed: withLock.emailEditUsed,
+        phoneEditUsed: withLock.phoneEditUsed,
+        dropsOpenedByType: withLock.dropsOpenedByType,
+        welcomeBonusGranted: withLock.welcomeBonusGranted,
+        settings: withLock.settings,
+        stats: withLock.stats,
+      }))
+    }
+  } catch { /* ignore */ }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(PENDING_REG_PROFILE_KEY, JSON.stringify({
+        uid,
+        name: withLock.name,
+        username: withLock.username,
+        email: withLock.email,
+        phone: withLock.phone,
+        gender: withLock.gender,
+        playerId: withLock.playerId,
+        createdAtMs: withLock.createdAtMs,
+      }))
+    }
+  } catch { /* ignore */ }
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('kd-reg-profile-ready', {
+        detail: {
+          uid,
+          name: withLock.name,
+          username: withLock.username,
+          email: withLock.email,
+          phone: withLock.phone,
+          gender: withLock.gender,
+          playerId: withLock.playerId,
+          gold: withLock.gold,
+          diamond: withLock.diamond,
+          isPremium: withLock.isPremium,
+          playerLevel: withLock.playerLevel,
+          playerXp: withLock.playerXp,
+          hunterLevel: withLock.hunterLevel,
+          title: withLock.title,
+          avatarUrl: withLock.avatarUrl,
+          avatar3d: withLock.avatar3d,
+          createdAtMs: withLock.createdAtMs,
+          giftsSentScore: withLock.giftsSentScore,
+          usernameEditUsed: withLock.usernameEditUsed,
+          emailEditUsed: withLock.emailEditUsed,
+          phoneEditUsed: withLock.phoneEditUsed,
+          dropsOpenedByType: withLock.dropsOpenedByType,
+          welcomeBonusGranted: withLock.welcomeBonusGranted,
+          settings: withLock.settings,
+          stats: withLock.stats,
+        },
+      }))
+    }
+  } catch { /* ignore */ }
+}
+
+export function peekPendingRegisteredProfile(uid: string): FullUserData | null {
+  let found: FullUserData | null = null
+  if (pendingRegisteredProfile?.uid === uid) found = pendingRegisteredProfile.data
+  if (!found) {
+    for (const store of [sessionStorage, localStorage]) {
+      try {
+        if (typeof store === 'undefined') continue
+        const raw = store.getItem(PENDING_REG_PROFILE_KEY)
+        if (!raw) continue
+        const parsed = JSON.parse(raw) as Record<string, unknown>
+        if (String(parsed.uid ?? '') !== uid) continue
+        found = parseFullUserData(parsed)
+        break
+      } catch { /* ignore */ }
+    }
+  }
+  if (!found) {
+    const locked = getLockedIdentity(uid)
+    if (locked?.username) {
+      found = {
+        ...createDefaultProfile(),
+        name: locked.name,
+        username: locked.username,
+        email: locked.email,
+        phone: locked.phone,
+        gender: locked.gender,
+        createdAtMs: locked.createdAtMs ?? Date.now(),
+        playerId: locked.playerId || '',
+      } as FullUserData
+    }
+  }
+  return found ? (applyLockedIdentity(uid, found) as FullUserData) : null
+}
+
+export function takePendingRegisteredProfile(uid: string): FullUserData | null {
+  const data = peekPendingRegisteredProfile(uid)
+  if (!data) return null
+  // قوفڵی ناسنامە مەسڕەوە — تەنها one-shot pending
+  pendingRegisteredProfile = null
+  try { sessionStorage?.removeItem(PENDING_REG_PROFILE_KEY) } catch { /* ignore */ }
+  try { localStorage?.removeItem(PENDING_REG_PROFILE_KEY) } catch { /* ignore */ }
+  return applyLockedIdentity(uid, data) as FullUserData
+}
+
+/** پرۆفایل بێ یوزەرنەیم/ئیمەیڵ — پێویستی بە بارکردنەوەی Firestore هەیە */
+export function isIdentityIncomplete(data: {
+  name?: string
+  username?: string
+  email?: string
+  phone?: string
+} | null | undefined): boolean {
+  if (!data) return true
+  const username = typeof data.username === 'string' ? data.username.trim() : ''
+  const email = typeof data.email === 'string' ? data.email.trim() : ''
+  const phone = typeof data.phone === 'string' ? data.phone.trim() : ''
+  const name = typeof data.name === 'string' ? data.name.trim() : ''
+  return !username || !email || !phone || !name || name === 'یاریزان'
 }
 
 /** دروستکردنی پرۆفایلی یاریزانی تۆمارکراو بە باڵانسی ستاندارد (٥٠٠ زێڕ + ٢٥ ئەڵماس) */
@@ -1629,6 +2111,16 @@ export async function createRegisteredUserProfile(
       gender,
     }
     cacheFromFullUser(uid, parsed)
+    stashPendingRegisteredProfile(uid, parsed)
+    // دڵنیابە Firestore ناسنامەی تەواوی هەیە
+    await repairUserIdentity(uid, {
+      name: fullName,
+      username,
+      email,
+      phone,
+      gender,
+      playerId: parsed.playerId,
+    }).catch(() => {})
     return parsed
   }
 
@@ -1700,6 +2192,15 @@ export async function createRegisteredUserProfile(
   }, { merge: true })
   const created = parseFullUserData({ ...payload, createdAtMs: payload.createdAtMs })
   cacheFromFullUser(uid, created)
+  stashPendingRegisteredProfile(uid, created)
+  await repairUserIdentity(uid, {
+    name: fullName,
+    username,
+    email,
+    phone,
+    gender,
+    playerId,
+  }).catch(() => {})
   return created
 }
 
@@ -1927,6 +2428,7 @@ export async function wipeAccountGameplayProgress(uid: string, parsed: FullUserD
     name: parsed.name?.trim() || 'یاریزان',
     username: parsed.username || '',
     email: typeof (parsed as { email?: string }).email === 'string' ? (parsed as { email?: string }).email : '',
+    phone: typeof (parsed as { phone?: string }).phone === 'string' ? (parsed as { phone?: string }).phone : '',
     gender,
     avatarUrl: null,
     avatar3d,
@@ -1943,6 +2445,8 @@ export async function wipeAccountGameplayProgress(uid: string, parsed: FullUserD
       playerId,
       name: parsed.name?.trim() || 'یاریزان',
       username: parsed.username || '',
+      email: typeof (parsed as { email?: string }).email === 'string' ? (parsed as { email?: string }).email : '',
+      phone: typeof (parsed as { phone?: string }).phone === 'string' ? (parsed as { phone?: string }).phone : '',
       gender,
       avatarUrl: null,
       avatar3d,
@@ -2026,24 +2530,101 @@ export async function runGlobalGameplayResetIfNeeded(): Promise<{ ran: boolean; 
 
 export async function getOrCreateUser(uid: string): Promise<FullUserData> {
   const ref = doc(db, 'users', uid)
-  let snap = await getDoc(ref)
 
-  // چاوەڕوانی تەواوبوونی تۆمارکردن — ڕێگری لە پرۆفایلی بەتاڵ/ناوی هەڕەمەکی
-  if (!snap.exists() && isRegistrationInflight()) {
-    let delay = 80
-    for (let i = 0; i < 40 && !snap.exists(); i++) {
-      await new Promise(r => setTimeout(r, delay))
-      snap = await getDoc(ref)
-      if (snap.exists()) break
-      if (!isRegistrationInflight()) break
-      delay = Math.min(250, Math.floor(delay * 1.35))
+  // پێش هەر شتێک — ناسنامەی قوفڵکراو / تۆمارکردن
+  const lockedEarly = getLockedIdentity(uid) ?? peekRegistrationIntent()
+  const earlyPending = peekPendingRegisteredProfile(uid)
+  if (earlyPending && earlyPending.username?.trim() && earlyPending.email?.trim()) {
+    const merged = applyLockedIdentity(uid, earlyPending) as FullUserData
+    void repairUserIdentity(uid, {
+      name: merged.name,
+      username: merged.username,
+      email: merged.email,
+      phone: merged.phone,
+      gender: merged.gender,
+      playerId: merged.playerId,
+    }).catch(() => {})
+    cacheFromFullUser(uid, merged)
+    return merged
+  }
+  if (lockedEarly?.username?.trim() && lockedEarly.email?.trim()) {
+    bindRegistrationIdentityToUid(uid, lockedEarly)
+    const seeded = applyLockedIdentity(uid, {
+      ...createDefaultProfile(),
+      name: lockedEarly.name,
+      username: lockedEarly.username,
+      email: lockedEarly.email,
+      phone: lockedEarly.phone,
+      gender: lockedEarly.gender,
+      createdAtMs: lockedEarly.createdAtMs ?? Date.now(),
+      playerId: lockedEarly.playerId || '',
+    } as FullUserData) as FullUserData
+    // چاوەڕوانی نووسینی تۆمارکردن ئەگەر هێشتا بەردەوامە
+    if (isRegistrationInflight()) {
+      const waited = await waitForRegisteredIdentity(uid, 25_000)
+      if (waited && waited.username?.trim()) {
+        cacheFromFullUser(uid, waited)
+        return waited
+      }
+    }
+    cacheFromFullUser(uid, seeded)
+    void repairUserIdentity(uid, {
+      name: seeded.name,
+      username: seeded.username,
+      email: seeded.email,
+      phone: seeded.phone,
+      gender: seeded.gender,
+      playerId: seeded.playerId,
+    }).catch(() => {})
+    // درێژە بدە بۆ خوێندنەوەی Firestore ئەگەر doc هەیە — بەڵام ناسنامە قوفڵە
+  }
+
+  // چاوەڕوانی تۆمارکردن — هەرگیز پرۆفایلی «یاریزان» دروست مەکە
+  if (isRegistrationInflight()) {
+    const waited = await waitForRegisteredIdentity(uid, 25_000)
+    if (waited && waited.username?.trim()) {
+      cacheFromFullUser(uid, waited)
+      return waited
     }
   }
 
+  let snap = await getDoc(ref)
+
   if (snap.exists()) {
     const raw = snap.data() as Record<string, unknown>
-    let parsed = parseFullUserData(raw)
-    // بەکارهێنەرانی کۆن کە پێش زیادکردنی سیستەمی ID دروستکراون، ئێستا IDـیان بۆ دادەنرێت
+    let parsed = applyLockedIdentity(uid, parseFullUserData(raw)) as FullUserData
+
+    // پرۆفایلی بەتاڵ دوای تۆمارکردن — لە pending/lock چاکی بکەرەوە
+    const pending = peekPendingRegisteredProfile(uid)
+    const locked = getLockedIdentity(uid)
+    if (isIdentityIncomplete(parsed) && ((pending && pending.username?.trim()) || locked?.username)) {
+      const fix = pending?.username ? pending : {
+        name: locked!.name,
+        username: locked!.username,
+        email: locked!.email,
+        phone: locked!.phone,
+        gender: locked!.gender,
+        playerId: locked!.playerId || parsed.playerId,
+      }
+      await repairUserIdentity(uid, {
+        name: fix.name,
+        username: fix.username,
+        email: fix.email,
+        phone: fix.phone,
+        gender: fix.gender,
+        playerId: fix.playerId || parsed.playerId,
+      })
+      parsed = {
+        ...parsed,
+        name: fix.name,
+        username: fix.username,
+        email: fix.email,
+        phone: fix.phone,
+        gender: fix.gender,
+        playerId: fix.playerId || parsed.playerId,
+      }
+    }
+
     if (!parsed.playerId) {
       const playerId = await reserveUniquePlayerId(uid)
       await updateDoc(ref, { playerId, updatedAt: serverTimestamp() })
@@ -2058,21 +2639,69 @@ export async function getOrCreateUser(uid: string): Promise<FullUserData> {
     const accountResetVer = Math.floor(Number(raw.gameplayResetVersion) || 0)
     if (accountResetVer < ACCOUNT_GAMEPLAY_RESET_VERSION) {
       parsed = await wipeAccountGameplayProgress(uid, parsed)
+      // wipe نابێت ناسنامە بسڕێتەوە
+      if (pending && pending.username?.trim()) {
+        parsed = {
+          ...parsed,
+          name: pending.name,
+          username: pending.username,
+          email: pending.email,
+          phone: pending.phone,
+          gender: pending.gender,
+        }
+      }
+      parsed = applyLockedIdentity(uid, parsed) as FullUserData
+      void repairUserIdentity(uid, {
+        name: parsed.name,
+        username: parsed.username,
+        email: parsed.email,
+        phone: parsed.phone,
+        gender: parsed.gender,
+        playerId: parsed.playerId,
+      }).catch(() => {})
     }
 
-    // players/{playerId} is source of truth for balances / level / inventory
-    const playerDoc = await ensurePlayerProgressDoc(parsed.playerId, uid, parsed)
-    parsed = mergePlayerProgressIntoUser(
-      { ...parsed, ...clampWalletToCap(parsed) },
-      playerDoc,
-    )
+    // دوای merge — ناسنامەی تۆمارکراو بمێنێتەوە
+    if (pending && pending.username?.trim()) {
+      parsed = {
+        ...parsed,
+        name: pending.name || parsed.name,
+        username: pending.username,
+        email: pending.email || parsed.email,
+        phone: pending.phone || parsed.phone,
+        gender: pending.gender || parsed.gender,
+      }
+    }
+    parsed = applyLockedIdentity(uid, parsed) as FullUserData
     cacheFromFullUser(uid, parsed)
     return parsed
   }
 
   // هێشتا تۆمارکردن بەردەوامە — دروستکردنی پرۆفایلی بەتاڵ قەدەغەیە
-  if (isRegistrationInflight()) {
+  if (shouldBlockGuestProfile(uid)) {
+    const waited = await waitForRegisteredIdentity(uid, 10_000)
+    if (waited && waited.username?.trim()) {
+      cacheFromFullUser(uid, waited)
+      return waited
+    }
+    const locked = getLockedIdentity(uid) ?? peekRegistrationIntent()
+    if (locked?.username) {
+      // دروستکردنی doc بە ناسنامەی تۆمارکراو — نەک یاریزان
+      return createRegisteredUserProfile(uid, {
+        fullName: locked.name,
+        username: locked.username,
+        email: locked.email,
+        phone: locked.phone,
+        gender: locked.gender,
+      })
+    }
     throw new Error('تۆمارکردن هێشتا بەردەوامە — دووبارە هەوڵ بدە.')
+  }
+
+  const stillPending = peekPendingRegisteredProfile(uid)
+  if (stillPending && stillPending.username?.trim()) {
+    cacheFromFullUser(uid, stillPending)
+    return stillPending
   }
 
   const profile = createDefaultProfile()
@@ -2108,7 +2737,6 @@ export async function getOrCreateUser(uid: string): Promise<FullUserData> {
     giftsSentScore: 0,
     leaderboardEpoch: GAMEPLAY_LEADERBOARD_EPOCH,
   })
-  // mark player reset version
   await setDoc(doc(db, 'players', playerId), { gameplayResetVersion: ACCOUNT_GAMEPLAY_RESET_VERSION }, { merge: true })
   const created: FullUserData = {
     ...seeded,
@@ -2609,6 +3237,8 @@ export async function purchaseMarketItem(
     usernameEditUsed: result.usernameEditUsed === true,
     emailEditUsed: result.emailEditUsed === true,
     phoneEditUsed: result.phoneEditUsed === true,
+    createdAtMs: (result as { createdAtMs?: number | null }).createdAtMs ?? null,
+    giftsSentScore: Math.max(0, Math.floor(Number((result as { giftsSentScore?: number }).giftsSentScore) || 0)),
   }
   cacheFromFullUser(uid, withId)
   return withId

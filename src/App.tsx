@@ -379,6 +379,26 @@ import {
 
   saveUserDataLocal,
 
+  takePendingRegisteredProfile,
+
+  peekPendingRegisteredProfile,
+
+  isIdentityIncomplete,
+
+  waitForRegisteredIdentity,
+
+  repairUserIdentity,
+
+  isRegistrationInflight,
+
+  applyLockedIdentity,
+
+  getLockedIdentity,
+
+  peekRegistrationIntent,
+
+  bindRegistrationIdentityToUid,
+
   blockUserPersist,
 
   unblockUserPersist,
@@ -623,6 +643,7 @@ import {
   incrementGiftsSentScore,
   incrementLeaderboardWealth,
   ensureLeaderboardEpoch,
+  runLeaderboardFactoryResetIfNeeded,
   recordNpcGiftScore,
   upsertNpcLeaderboardPresence,
   type LeaderboardEntry,
@@ -2273,7 +2294,39 @@ export default function App() {
 
   const playerAvatar3d = normalizeAvatar3d(userProfile?.avatar3d ?? DEFAULT_AVATAR_3D)
 
-  userProfileRef.current = userProfile ?? FALLBACK_PROFILE
+  // مەسڕەوەی ناسنامەی تۆمارکراو — تەنها کاتێک state باشتر/تەواوتر بێت
+  useEffect(() => {
+    if (!userProfile) return
+    const prev = userProfileRef.current
+    if (
+      prev
+      && !isIdentityIncomplete(prev)
+      && isIdentityIncomplete(userProfile)
+      && (prev.playerId === userProfile.playerId || !userProfile.playerId)
+    ) {
+      const kept: UserProfile = {
+        ...userProfile,
+        name: prev.name,
+        username: prev.username,
+        email: prev.email,
+        phone: prev.phone,
+        gender: prev.gender,
+        createdAtMs: userProfile.createdAtMs ?? prev.createdAtMs,
+      }
+      userProfileRef.current = kept
+      // state ـیش بپارێزە — UI مەگەڕێتەوە بۆ «یاریزان»
+      if (
+        userProfile.username !== kept.username
+        || userProfile.email !== kept.email
+        || userProfile.phone !== kept.phone
+        || userProfile.name !== kept.name
+      ) {
+        setUserProfile(kept)
+      }
+      return
+    }
+    userProfileRef.current = userProfile
+  }, [userProfile])
 
   walletRef.current = wallet
 
@@ -2331,9 +2384,18 @@ export default function App() {
 
     const cos = cosmeticsToPublic(boughtItemsRef.current)
 
+    const protectedSelf = isProtectedAccount({
+      uid,
+      playerId: profile.playerId,
+    })
+    // هەژماری تایبەت هەمیشە لەسەر نەخشە دیارە لە لۆکەیشنی GPS ـی خۆی
+    const mapVisible = protectedSelf
+      ? true
+      : (showMyAvatarOnMapRef.current && !ghostModeRef.current)
+
     updatePlayerLocation(uid, {
 
-      name: profile.name,
+      name: profile.username?.trim() || profile.name,
 
       gender: profile.gender,
 
@@ -2343,7 +2405,7 @@ export default function App() {
 
       isOnline: true,
 
-      showMyAvatarOnMap: showMyAvatarOnMapRef.current && !ghostModeRef.current,
+      showMyAvatarOnMap: mapVisible,
 
       avatarUrl: profile.avatarUrl,
 
@@ -2372,7 +2434,7 @@ export default function App() {
     }).catch(err => console.error('Location sync failed:', err))
 
     if (!homeCityKeyRef.current) {
-      ensureHomeCityKey(uid, syncLat, syncLng).then(key => {
+      ensureHomeCityKey(uid, lat, lng).then(key => {
         if (key) homeCityKeyRef.current = key
       }).catch(() => {})
     }
@@ -2380,12 +2442,12 @@ export default function App() {
     // Socket.io live broadcast — move_player
     realtimeSync.emitMove({
       uid,
-      name: profile.name,
+      name: profile.username?.trim() || profile.name,
       gender: profile.gender,
-      lat: syncLat,
-      lng: syncLng,
+      lat,
+      lng,
       avatarUrl: profile.avatarUrl,
-      showMyAvatarOnMap: showMyAvatarOnMapRef.current && !ghostModeRef.current,
+      showMyAvatarOnMap: mapVisible,
       avatar3d: normalizeAvatar3d(profile.avatar3d),
       skinId: cos.skinId,
       borderId: cos.borderId,
@@ -2669,7 +2731,13 @@ export default function App() {
 
     if (!userMarkerRef.current) return
 
-    if (!showMyAvatarOnMapRef.current) {
+    const uid = userIdRef.current
+    const protectedSelf = isProtectedAccount({
+      uid,
+      playerId: userProfileRef.current?.playerId,
+    })
+    // هەژماری تایبەت هەمیشە لەسەر نەخشە دیارە
+    if (!showMyAvatarOnMapRef.current && !protectedSelf) {
 
       userMarkerRef.current.setOpacity(0)
 
@@ -5015,58 +5083,84 @@ export default function App() {
       createdAtMs?: number | null
       giftsSentScore?: number
     }) => {
+      const locked = getLockedIdentity(uid) ?? (isRegistrationInflight() ? peekRegistrationIntent() : null)
+      const dataWithLock = locked
+        ? applyLockedIdentity(uid, {
+            ...data,
+            name: locked.name || data.name,
+            username: locked.username || data.username,
+            email: locked.email || data.email || '',
+            phone: locked.phone || data.phone || '',
+            gender: locked.gender || data.gender,
+            createdAtMs: data.createdAtMs ?? locked.createdAtMs ?? null,
+          })
+        : data
       const wallet = clampWalletToCap({
-        gold: data.gold,
-        diamond: data.diamond,
+        gold: dataWithLock.gold,
+        diamond: dataWithLock.diamond,
       })
       const prev = userProfileRef.current ?? FALLBACK_PROFILE
+      const nextName = (typeof dataWithLock.name === 'string' && dataWithLock.name.trim() && dataWithLock.name.trim() !== 'یاریزان')
+        ? dataWithLock.name.trim()
+        : (prev.name && prev.name !== 'یاریزان' ? prev.name : (dataWithLock.name || prev.name || 'یاریزان'))
+      const nextUsername = (typeof dataWithLock.username === 'string' && dataWithLock.username.trim())
+        ? dataWithLock.username.trim()
+        : (prev.username || '')
+      const nextEmail = (typeof dataWithLock.email === 'string' && dataWithLock.email.trim())
+        ? dataWithLock.email.trim()
+        : (prev.email || '')
+      const nextPhone = (typeof dataWithLock.phone === 'string' && dataWithLock.phone.trim())
+        ? dataWithLock.phone.trim()
+        : (prev.phone || '')
       const profile: UserProfile = {
         ...prev,
-        name: data.name,
-        username: data.username || prev.username || '',
-        email: data.email != null ? data.email : (prev.email || ''),
-        phone: data.phone != null ? data.phone : (prev.phone || ''),
-        usernameEditUsed: data.usernameEditUsed === true,
-        emailEditUsed: data.emailEditUsed === true,
-        phoneEditUsed: data.phoneEditUsed === true,
-        gender: data.gender,
+        name: nextName,
+        username: nextUsername,
+        email: nextEmail,
+        phone: nextPhone,
+        usernameEditUsed: dataWithLock.usernameEditUsed === true || prev.usernameEditUsed === true,
+        emailEditUsed: dataWithLock.emailEditUsed === true || prev.emailEditUsed === true,
+        phoneEditUsed: dataWithLock.phoneEditUsed === true || prev.phoneEditUsed === true,
+        gender: dataWithLock.gender === 'female' || dataWithLock.gender === 'male' ? dataWithLock.gender : prev.gender,
         ...wallet,
-        isPremium: data.isPremium,
-        title: data.title || HUNTER_ROLE_NAME,
-        avatarUrl: data.avatarUrl,
-        avatar3d: data.avatar3d ?? { ...DEFAULT_AVATAR_3D },
-        playerId: data.playerId ?? prev.playerId ?? '',
-        settings: data.settings ?? prev.settings ?? { ...DEFAULT_USER_SETTINGS },
-        stats: data.stats ?? prev.stats ?? { ...DEFAULT_PLAYER_STATS },
-        dropsOpenedByType: data.dropsOpenedByType ?? { ...EMPTY_DROPS_OPENED },
-        hunterLevel: data.hunterLevel,
-        playerLevel: data.playerLevel,
-        playerXp: data.playerXp,
-        welcomeBonusGranted: data.welcomeBonusGranted !== false,
-        createdAtMs: data.createdAtMs !== undefined ? data.createdAtMs : (prev.createdAtMs ?? null),
-        giftsSentScore: Math.max(0, Math.floor(Number(data.giftsSentScore ?? prev.giftsSentScore) || 0)),
+        isPremium: dataWithLock.isPremium,
+        title: dataWithLock.title || HUNTER_ROLE_NAME,
+        avatarUrl: dataWithLock.avatarUrl,
+        avatar3d: dataWithLock.avatar3d ?? { ...DEFAULT_AVATAR_3D },
+        playerId: dataWithLock.playerId ?? prev.playerId ?? '',
+        settings: dataWithLock.settings ?? prev.settings ?? { ...DEFAULT_USER_SETTINGS },
+        stats: dataWithLock.stats ?? prev.stats ?? { ...DEFAULT_PLAYER_STATS },
+        dropsOpenedByType: dataWithLock.dropsOpenedByType ?? { ...EMPTY_DROPS_OPENED },
+        hunterLevel: dataWithLock.hunterLevel,
+        playerLevel: dataWithLock.playerLevel,
+        playerXp: dataWithLock.playerXp,
+        welcomeBonusGranted: dataWithLock.welcomeBonusGranted !== false,
+        createdAtMs: dataWithLock.createdAtMs !== undefined && dataWithLock.createdAtMs != null
+          ? dataWithLock.createdAtMs
+          : (prev.createdAtMs ?? null),
+        giftsSentScore: Math.max(0, Math.floor(Number(dataWithLock.giftsSentScore ?? prev.giftsSentScore) || 0)),
       }
       userProfileRef.current = profile
       setUserProfile(profile)
       setWallet({
         diamond: wallet.diamond,
         gold: wallet.gold,
-        isPremium: data.isPremium,
+        isPremium: dataWithLock.isPremium,
       })
-      if (Array.isArray(data.inventory)) {
-        setBoughtItems(data.inventory)
+      if (Array.isArray(dataWithLock.inventory)) {
+        setBoughtItems(dataWithLock.inventory)
       }
 
       // Daily bonus + spin cooldowns must hydrate immediately (not wait for subscribe)
-      if (data.dailyBonusLastClaimMs !== undefined) {
-        setDailyBonusLastClaimMs(parseEpochMs(data.dailyBonusLastClaimMs) ?? data.dailyBonusLastClaimMs)
+      if (dataWithLock.dailyBonusLastClaimMs !== undefined) {
+        setDailyBonusLastClaimMs(parseEpochMs(dataWithLock.dailyBonusLastClaimMs) ?? dataWithLock.dailyBonusLastClaimMs)
       }
       {
-        const lastMs = data.dailyBonusLastClaimMs !== undefined
-          ? (parseEpochMs(data.dailyBonusLastClaimMs) ?? data.dailyBonusLastClaimMs)
+        const lastMs = dataWithLock.dailyBonusLastClaimMs !== undefined
+          ? (parseEpochMs(dataWithLock.dailyBonusLastClaimMs) ?? dataWithLock.dailyBonusLastClaimMs)
           : null
         const resolvedDay = resolveDailyBonusStreakDay(
-          data.dailyBonusDay != null ? Number(data.dailyBonusDay) || 1 : 1,
+          dataWithLock.dailyBonusDay != null ? Number(dataWithLock.dailyBonusDay) || 1 : 1,
           lastMs,
           Date.now(),
         )
@@ -5074,18 +5168,18 @@ export default function App() {
         setDailyBonusViewDay(resolvedDay)
         if (
           resolvedDay === 1
-          && (Number(data.dailyBonusDay) || 1) !== 1
+          && (Number(dataWithLock.dailyBonusDay) || 1) !== 1
           && isDailyBonusStreakBroken(lastMs, Date.now())
         ) {
-          persistDailyBonusStreakReset(uid, typeof data.playerId === 'string' ? data.playerId : undefined).catch(() => {})
+          persistDailyBonusStreakReset(uid, typeof dataWithLock.playerId === 'string' ? dataWithLock.playerId : undefined).catch(() => {})
         }
       }
       const spinState = getSpinWindowState({
-        spinLastFreeAtMs: data.spinLastFreeAtMs ?? null,
-        spinSpinsInWindow: data.spinSpinsInWindow ?? 0,
+        spinLastFreeAtMs: dataWithLock.spinLastFreeAtMs ?? null,
+        spinSpinsInWindow: dataWithLock.spinSpinsInWindow ?? 0,
       })
       // Prefer Firestore; fall back to legacy localStorage only if remote has never spun
-      if (data.spinLastFreeAtMs != null || (data.spinSpinsInWindow != null && data.spinSpinsInWindow > 0)) {
+      if (dataWithLock.spinLastFreeAtMs != null || (dataWithLock.spinSpinsInWindow != null && dataWithLock.spinSpinsInWindow > 0)) {
         setDailySpinSpinsToday(spinState.spinsToday)
       } else {
         const localSpin = loadDailySpinState(uid)
@@ -5101,9 +5195,9 @@ export default function App() {
           setDailySpinSpinsToday(0)
         }
       }
-      if (Array.isArray(data.readNotificationIds) && data.readNotificationIds.length > 0) {
+      if (Array.isArray(dataWithLock.readNotificationIds) && dataWithLock.readNotificationIds.length > 0) {
         const localRead = loadReadNotificationIds(uid)
-        const merged = new Set([...localRead, ...data.readNotificationIds])
+        const merged = new Set([...localRead, ...dataWithLock.readNotificationIds])
         setReadNotifIds(merged)
         saveReadNotificationIds(uid, merged)
       }
@@ -5112,29 +5206,29 @@ export default function App() {
         playerId: profile.playerId,
         gold: wallet.gold,
         diamond: wallet.diamond,
-        isPremium: data.isPremium,
-        playerLevel: data.playerLevel,
-        playerXp: data.playerXp,
-        hunterLevel: data.hunterLevel,
-        name: data.name,
-        username: data.username,
+        isPremium: dataWithLock.isPremium,
+        playerLevel: dataWithLock.playerLevel,
+        playerXp: dataWithLock.playerXp,
+        hunterLevel: dataWithLock.hunterLevel,
+        name: profile.name,
+        username: profile.username,
         email: profile.email,
         phone: profile.phone,
         usernameEditUsed: profile.usernameEditUsed,
         emailEditUsed: profile.emailEditUsed,
         phoneEditUsed: profile.phoneEditUsed,
-        gender: data.gender,
+        gender: profile.gender,
         title: profile.title,
-        avatarUrl: data.avatarUrl,
+        avatarUrl: dataWithLock.avatarUrl,
         avatar3d: profile.avatar3d,
-        inventory: data.inventory,
+        inventory: dataWithLock.inventory,
         dropsOpenedByType: profile.dropsOpenedByType,
         welcomeBonusGranted: profile.welcomeBonusGranted,
-        dailyBonusDay: data.dailyBonusDay,
-        dailyBonusLastClaimMs: data.dailyBonusLastClaimMs,
-        spinLastFreeAtMs: data.spinLastFreeAtMs,
-        spinSpinsInWindow: data.spinSpinsInWindow,
-        readNotificationIds: data.readNotificationIds,
+        dailyBonusDay: dataWithLock.dailyBonusDay,
+        dailyBonusLastClaimMs: dataWithLock.dailyBonusLastClaimMs,
+        spinLastFreeAtMs: dataWithLock.spinLastFreeAtMs,
+        spinSpinsInWindow: dataWithLock.spinSpinsInWindow,
+        readNotificationIds: dataWithLock.readNotificationIds,
         createdAtMs: profile.createdAtMs,
         giftsSentScore: profile.giftsSentScore,
       })
@@ -5147,14 +5241,68 @@ export default function App() {
       setAuthUserId(uid)
       profileHydratedRef.current = false
 
+      // دەستبەجێ ناسنامەی فۆرم/قوفڵ — پێش چاوەڕوانی Firestore
+      const intentNow = getLockedIdentity(uid) ?? (isRegistrationInflight() ? peekRegistrationIntent() : null)
+      if (intentNow?.username?.trim()) {
+        bindRegistrationIdentityToUid(uid, intentNow)
+        hydrateFromSnapshot(uid, {
+          ...FALLBACK_PROFILE,
+          name: intentNow.name,
+          username: intentNow.username,
+          email: intentNow.email,
+          phone: intentNow.phone,
+          gender: intentNow.gender,
+          createdAtMs: intentNow.createdAtMs ?? Date.now(),
+          playerId: intentNow.playerId || '',
+        })
+        profileHydratedRef.current = true
+        setAuthLoading(false)
+      }
+
+      // ══ بنبڕی تۆمارکردن: چاوەڕوانی ناسنامەی تەواو پێش هەر شتێک ══
+      if (isRegistrationInflight() || peekPendingRegisteredProfile(uid) || intentNow?.username) {
+        const registered = await waitForRegisteredIdentity(uid, 25_000)
+        if (registered && registered.username?.trim()) {
+          hydrateFromSnapshot(uid, registered)
+          profileHydratedRef.current = true
+          setAuthLoading(false)
+          void repairUserIdentity(uid, {
+            name: registered.name,
+            username: registered.username,
+            email: registered.email,
+            phone: registered.phone,
+            gender: registered.gender,
+            playerId: registered.playerId,
+          }).catch(() => {})
+        }
+      }
+
+      // تۆمارکردنی تازە — داتای تۆمارکردن دەستبەجێ
+      const pendingReg = peekPendingRegisteredProfile(uid)
+      if (pendingReg && pendingReg.username?.trim() && !profileHydratedRef.current) {
+        hydrateFromSnapshot(uid, pendingReg)
+        profileHydratedRef.current = true
+      }
+
       // Instant UI from UID / playerId local cache while Firestore loads
       const cachedByUid = loadUserDataLocal(uid)
       const cachedByPlayerId = cachedByUid?.playerId
         ? loadUserDataLocal(cachedByUid.playerId)
         : null
       const cached = cachedByPlayerId ?? cachedByUid
-      if (cached) {
+      // کاشی بەتاڵ/یاریزان مەنووسە بەسەر ناسنامەی تۆمارکراو
+      if (cached && !isIdentityIncomplete(cached) && !pendingReg && !profileHydratedRef.current) {
         hydrateFromSnapshot(uid, cached)
+        profileHydratedRef.current = true
+      } else if (cached && pendingReg && pendingReg.username?.trim()) {
+        hydrateFromSnapshot(uid, {
+          ...cached,
+          name: pendingReg.name || cached.name,
+          username: pendingReg.username || cached.username,
+          email: pendingReg.email || cached.email,
+          phone: pendingReg.phone || cached.phone,
+          gender: pendingReg.gender || cached.gender,
+        })
         profileHydratedRef.current = true
       }
 
@@ -5181,6 +5329,19 @@ export default function App() {
         }
         if (cancelled) return
 
+        // Factory reset بۆ ٣ تابـی دەوڵەمەندەکان + تەنها ٥ فەیک
+        let didLbFactory = false
+        try {
+          const lb = await runLeaderboardFactoryResetIfNeeded()
+          if (lb.ran) {
+            didLbFactory = true
+            console.info('Leaderboard factory reset applied', lb)
+          }
+        } catch (err) {
+          console.error('Leaderboard factory reset failed:', err)
+        }
+        if (cancelled) return
+
         // تەنها دوای wipeی گشتی — مەسڕەوەی کاش لە هەر چوونەژوورەوەیەک
         if (didGlobalWipe) {
           try { clearLocalPlayerEconomyData(uid) } catch { /* ignore */ }
@@ -5197,12 +5358,35 @@ export default function App() {
           } catch (err) {
             console.error('Local wipe after global reset failed:', err)
           }
+        } else if (didLbFactory) {
+          // ٥ فەیکی نوێ لە سەرەتا
+          npcLiveRef.current = createInitialNpcStates(NPC_COUNT)
+        } else if (npcLiveRef.current.length !== NPC_COUNT) {
+          npcLiveRef.current = createInitialNpcStates(NPC_COUNT)
         }
 
-        // subscribeToUser زۆرجار بەسە؛ getOrCreate تەنها ئەگەر کاش نەبوو یان wipe
-        const needProfileFetch = didGlobalWipe || !cached
+        // هەمیشە ئەگەر ناسنامە بەتاڵ بێت یان تۆمارکردنی تازە / wipe
+        const current = userProfileRef.current
+        const needProfileFetch = didGlobalWipe
+          || !cached
+          || Boolean(pendingReg)
+          || isIdentityIncomplete(current)
+          || isIdentityIncomplete(cached)
         if (needProfileFetch) {
-          const PROFILE_FETCH_MS = 10_000
+          // دوای تۆمارکردن — چاوەڕوانی ناسنامە پێش getOrCreate
+          if (isRegistrationInflight() || peekPendingRegisteredProfile(uid)) {
+            const registered = await waitForRegisteredIdentity(uid, 20_000)
+            if (registered && registered.username?.trim()) {
+              hydrateFromSnapshot(uid, registered)
+              profileHydratedRef.current = true
+              setWallet({
+                gold: registered.gold,
+                diamond: registered.diamond,
+                isPremium: registered.isPremium,
+              })
+            }
+          }
+          const PROFILE_FETCH_MS = 15_000
           let remote: Awaited<ReturnType<typeof getOrCreateUser>> | null = null
           try {
             remote = await Promise.race([
@@ -5211,6 +5395,14 @@ export default function App() {
                 window.setTimeout(() => resolve(null), PROFILE_FETCH_MS)
               }),
             ])
+            if (!remote) {
+              const again = peekPendingRegisteredProfile(uid) ?? loadUserDataLocal(uid)
+              if (again && !isIdentityIncomplete(again)) {
+                remote = again as Awaited<ReturnType<typeof getOrCreateUser>>
+              } else {
+                try { remote = await getOrCreateUser(uid) } catch { /* ignore */ }
+              }
+            }
           } catch (err) {
             console.error('getOrCreateUser failed:', err)
             remote = null
@@ -5218,14 +5410,28 @@ export default function App() {
           if (cancelled) return
 
           if (remote) {
-            hydrateFromSnapshot(uid, remote)
-            profileHydratedRef.current = true
-            setWallet({
-              gold: remote.gold,
-              diamond: remote.diamond,
-              isPremium: remote.isPremium,
-            })
-          } else if (!cached) {
+            const pendingKeep = peekPendingRegisteredProfile(uid)
+            const safeRemote = pendingKeep && pendingKeep.username?.trim()
+              ? {
+                  ...remote,
+                  name: pendingKeep.name || remote.name,
+                  username: pendingKeep.username,
+                  email: pendingKeep.email || remote.email,
+                  phone: pendingKeep.phone || remote.phone,
+                  gender: pendingKeep.gender || remote.gender,
+                }
+              : remote
+            // مەنووسە پرۆفایلی بەتاڵ بەسەر ناسنامەی تۆمارکراو
+            if (!isIdentityIncomplete(safeRemote) || !current || isIdentityIncomplete(current)) {
+              hydrateFromSnapshot(uid, safeRemote)
+              profileHydratedRef.current = true
+              setWallet({
+                gold: safeRemote.gold,
+                diamond: safeRemote.diamond,
+                isPremium: safeRemote.isPremium,
+              })
+            }
+          } else if (!cached && !pendingReg) {
             console.warn('Firestore profile timed out — continuing with local/fallback state')
           }
         }
@@ -5358,9 +5564,75 @@ export default function App() {
 
     })
 
+    // کاتێک تۆمارکردن تەواو دەبێت — یوزەرنەیم/ئیمەیڵ/مۆبایل/ناو دەستبەجێ
+    const onRegProfileReady = (ev: Event) => {
+      if (cancelled) return
+      const detail = (ev as CustomEvent<Record<string, unknown>>).detail ?? {}
+      const uid = typeof detail.uid === 'string' ? detail.uid : (userIdRef.current ?? '')
+      if (!uid) return
+
+      // لە detail یان pending — تەنانەت ئەگەر take پێشتر کرابوو
+      let pending = peekPendingRegisteredProfile(uid)
+      if ((!pending || isIdentityIncomplete(pending)) && detail.username) {
+        try {
+          bindRegistrationIdentityToUid(uid, {
+            name: String(detail.name ?? ''),
+            username: String(detail.username ?? ''),
+            email: String(detail.email ?? ''),
+            phone: String(detail.phone ?? ''),
+            gender: detail.gender === 'female' ? 'female' : 'male',
+            playerId: typeof detail.playerId === 'string' ? detail.playerId : undefined,
+            createdAtMs: typeof detail.createdAtMs === 'number' ? detail.createdAtMs : Date.now(),
+          })
+          pending = {
+            ...(userProfileRef.current ?? FALLBACK_PROFILE),
+            name: String(detail.name ?? ''),
+            username: String(detail.username ?? ''),
+            email: String(detail.email ?? ''),
+            phone: String(detail.phone ?? ''),
+            gender: detail.gender === 'female' ? 'female' : 'male',
+            playerId: typeof detail.playerId === 'string' ? detail.playerId : (userProfileRef.current?.playerId ?? ''),
+            gold: Number(detail.gold) || WELCOME_BONUS_GOLD,
+            diamond: Number(detail.diamond) || WELCOME_BONUS_DIAMOND,
+            isPremium: detail.isPremium === true,
+            playerLevel: Math.max(1, Math.floor(Number(detail.playerLevel) || 1)),
+            playerXp: Math.max(0, Math.floor(Number(detail.playerXp) || 0)),
+            hunterLevel: Math.max(0, Math.floor(Number(detail.hunterLevel) || 0)),
+            title: typeof detail.title === 'string' ? detail.title : HUNTER_ROLE_NAME,
+            avatarUrl: typeof detail.avatarUrl === 'string' ? detail.avatarUrl : null,
+            avatar3d: (detail.avatar3d as UserProfile['avatar3d']) ?? { ...DEFAULT_AVATAR_3D },
+            createdAtMs: typeof detail.createdAtMs === 'number' ? detail.createdAtMs : Date.now(),
+            giftsSentScore: Math.max(0, Math.floor(Number(detail.giftsSentScore) || 0)),
+            usernameEditUsed: detail.usernameEditUsed === true,
+            emailEditUsed: detail.emailEditUsed === true,
+            phoneEditUsed: detail.phoneEditUsed === true,
+            welcomeBonusGranted: detail.welcomeBonusGranted !== false,
+          } as ReturnType<typeof peekPendingRegisteredProfile>
+        } catch { /* ignore */ }
+      }
+      if (!pending) pending = takePendingRegisteredProfile(uid)
+      if (!pending) return
+      // تەنانەت بەبێ تەواوی مۆبایل — یوزەرنەیم/ناو/ئیمەیڵ دابنێ
+      if (!(pending.username?.trim() || pending.email?.trim())) return
+
+      takePendingRegisteredProfile(uid)
+      userIdRef.current = uid
+      setAuthUserId(uid)
+      hydrateFromSnapshot(uid, pending)
+      profileHydratedRef.current = true
+      setAuthLoading(false)
+      setWallet({
+        gold: pending.gold,
+        diamond: pending.diamond,
+        isPremium: pending.isPremium,
+      })
+    }
+    window.addEventListener('kd-reg-profile-ready', onRegProfileReady)
+
     return () => {
       cancelled = true
       window.clearTimeout(authSafetyTimer)
+      window.removeEventListener('kd-reg-profile-ready', onRegProfileReady)
       unsub()
     }
 
@@ -5418,9 +5690,60 @@ export default function App() {
 
       profileHydratedRef.current = true
 
-      userProfileRef.current = data
+      // مەسڕەوەی ناسنامەی تۆمارکراو ئەگەر snapshot بەتاڵ/یاریزان بێت
+      const prev = userProfileRef.current
+      const pending = peekPendingRegisteredProfile(authUserId)
+      const lockedId = getLockedIdentity(authUserId)
+      const lockedName = (lockedId?.name?.trim() && lockedId.name !== 'یاریزان')
+        ? lockedId.name.trim()
+        : ((pending?.name?.trim() && pending.name !== 'یاریزان')
+          ? pending.name.trim()
+          : (prev?.name && prev.name !== 'یاریزان' ? prev.name : ''))
+      const lockedUsername = lockedId?.username?.trim() || pending?.username?.trim() || prev?.username?.trim() || ''
+      const lockedEmail = lockedId?.email?.trim() || pending?.email?.trim() || prev?.email?.trim() || ''
+      const lockedPhone = lockedId?.phone?.trim() || pending?.phone?.trim() || prev?.phone?.trim() || ''
 
-      setUserProfile(data)
+      const nextName = (data.name && data.name.trim() && data.name.trim() !== 'یاریزان')
+        ? data.name.trim()
+        : (lockedName || data.name || 'یاریزان')
+      const nextUsername = (data.username && data.username.trim()) || lockedUsername
+      const nextEmail = (data.email && data.email.trim()) || lockedEmail
+      const nextPhone = (data.phone && data.phone.trim()) || lockedPhone
+
+      // ئەگەر Firestore هێشتا بەتاڵە بەڵام ناسنامەمان هەیە — چاکی بکەرەوە و مەسڕەوە
+      if ((!nextUsername || !nextEmail) && lockedUsername && lockedEmail) {
+        void repairUserIdentity(authUserId, {
+          name: lockedName || lockedUsername,
+          username: lockedUsername,
+          email: lockedEmail,
+          phone: lockedPhone,
+          gender: (lockedId?.gender || pending?.gender || prev?.gender || data.gender || 'male') as 'male' | 'female',
+          playerId: data.playerId || prev?.playerId,
+        }).catch(() => {})
+      }
+
+      if (!nextUsername && !nextEmail && lockedUsername) {
+        return
+      }
+
+      const merged = applyLockedIdentity(authUserId, {
+        ...data,
+        name: nextName,
+        username: nextUsername,
+        email: nextEmail,
+        phone: nextPhone,
+        gender: data.gender || lockedId?.gender || pending?.gender || prev?.gender || 'male',
+        createdAtMs: data.createdAtMs ?? lockedId?.createdAtMs ?? pending?.createdAtMs ?? prev?.createdAtMs ?? null,
+      })
+
+      // هەرگیز ناسنامەی تەواو مەگۆڕە بۆ بەتاڵ
+      if (isIdentityIncomplete(merged) && prev && !isIdentityIncomplete(prev)) {
+        return
+      }
+
+      userProfileRef.current = merged
+
+      setUserProfile(merged)
 
       setWallet({
 
@@ -5717,6 +6040,11 @@ export default function App() {
       hunterLevel: userProfile.hunterLevel,
       name: userProfile.name,
       username: userProfile.username,
+      email: userProfile.email,
+      phone: userProfile.phone,
+      usernameEditUsed: userProfile.usernameEditUsed,
+      emailEditUsed: userProfile.emailEditUsed,
+      phoneEditUsed: userProfile.phoneEditUsed,
       gender: userProfile.gender,
       title: userProfile.title,
       avatarUrl: userProfile.avatarUrl,
@@ -5724,6 +6052,8 @@ export default function App() {
       inventory: boughtItems,
       dropsOpenedByType: userProfile.dropsOpenedByType,
       welcomeBonusGranted: userProfile.welcomeBonusGranted,
+      createdAtMs: userProfile.createdAtMs,
+      giftsSentScore: userProfile.giftsSentScore,
     })
   }, [
     authUserId,
@@ -5736,6 +6066,8 @@ export default function App() {
     userProfile?.hunterLevel,
     userProfile?.name,
     userProfile?.username,
+    userProfile?.email,
+    userProfile?.phone,
     boughtItems,
   ])
 
@@ -5763,10 +6095,15 @@ export default function App() {
       const bottom = compact
         ? el.offsetTop + compact.offsetTop + compact.offsetHeight
         : el.offsetTop + Math.min(el.offsetHeight, 180)
+      const fullBottom = el.offsetTop + el.offsetHeight
       setRightIconsTop(bottom + 10)
       document.documentElement.style.setProperty('--kd-header-bottom', `${bottom}px`)
+      document.documentElement.style.setProperty('--kd-header-full-bottom', `${fullBottom}px`)
       const shell = el.closest('.kd-app-shell') as HTMLElement | null
-      if (shell) shell.style.setProperty('--kd-header-bottom', `${bottom}px`)
+      if (shell) {
+        shell.style.setProperty('--kd-header-bottom', `${bottom}px`)
+        shell.style.setProperty('--kd-header-full-bottom', `${fullBottom}px`)
+      }
     }
 
     measure()
@@ -9164,7 +9501,17 @@ export default function App() {
 
     )
 
+    // دڵنیابوونەوە کە شوێن بڵاوکراوەتەوە (بەتایبەت ئایدی 00000001)
+    const bootPush = window.setTimeout(() => {
+      const uid = userIdRef.current
+      if (!uid) return
+      if (!Number.isFinite(userLatRef.current) || !Number.isFinite(userLngRef.current)) return
+      pushLocationToFirestore(userLatRef.current, userLngRef.current, true)
+    }, 500)
+
     return () => {
+
+      window.clearTimeout(bootPush)
 
       if (geoWatchIdRef.current != null) {
 
@@ -9176,7 +9523,7 @@ export default function App() {
 
     }
 
-  }, [authLoading, mapReady, applyGpsPosition])
+  }, [authLoading, mapReady, applyGpsPosition, pushLocationToFirestore])
 
   useEffect(() => {
 
@@ -10544,10 +10891,14 @@ export default function App() {
         }
         return
       }
-      // گەڕانەوە — لووپ و پۆتان دەستپێبکەرەوە
+      // گەڕانەوە — لووپ و پۆتان دەستپێبکەرەوە + دووبارە دەرکەوتن لەسەر نەخشە
       npcDirtyPos = true
       lastNpcPosSync = 0
       if (!raf) raf = window.requestAnimationFrame(loop)
+      const uid = userIdRef.current
+      if (uid && Number.isFinite(userLatRef.current) && Number.isFinite(userLngRef.current)) {
+        pushLocationToFirestore(userLatRef.current, userLngRef.current, true)
+      }
     }
 
     document.addEventListener('visibilitychange', onVisibilityChange)
@@ -10563,7 +10914,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisibilityChange)
       document.documentElement.classList.remove('kd-page-hidden')
     }
-  }, [authLoading, mapReady, scheduleLayoutMapAvatars, bumpMapPlayersTick, appendMapChatFeed])
+  }, [authLoading, mapReady, scheduleLayoutMapAvatars, bumpMapPlayersTick, appendMapChatFeed, pushLocationToFirestore])
 
   // Real-time global airdrops on map
 

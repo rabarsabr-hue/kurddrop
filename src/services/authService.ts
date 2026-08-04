@@ -18,6 +18,10 @@ import {
   resolveEmailFromLoginIdentifier,
   deleteUserProfileData,
   setRegistrationInflight,
+  stashPendingRegisteredProfile,
+  lockRegistrationIntent,
+  bindRegistrationIdentityToUid,
+  clearRegistrationIntent,
   type Gender,
 } from './userService'
 
@@ -152,12 +156,20 @@ export async function registerAccount(opts: {
     throw new Error('ڕەگەز دیاری بکە (نێر یان مێ).')
   }
   const email = opts.email.trim().toLowerCase()
+  // گرنگ: پێش Auth — ناسنامە قوفڵ بکە تا onAuthStateChanged «یاریزان» دروست نەکات
+  const intent = lockRegistrationIntent({
+    fullName: opts.fullName,
+    username: opts.username,
+    email,
+    phone: opts.phone,
+    gender: opts.gender,
+  })
   setRegistrationInflight(true)
   try {
     const { user } = await createUserWithEmailAndPassword(auth, email, opts.password)
-    // updateProfile لە پاشبنەما — پرۆفایلی یاری سەرەکییە
-    void updateProfile(user, { displayName: opts.fullName.trim() }).catch(() => {})
-    await createRegisteredUserProfile(user.uid, {
+    bindRegistrationIdentityToUid(user.uid, intent)
+    void updateProfile(user, { displayName: opts.username.trim() || opts.fullName.trim() }).catch(() => {})
+    const profile = await createRegisteredUserProfile(user.uid, {
       fullName: opts.fullName,
       username: opts.username,
       email,
@@ -165,7 +177,23 @@ export async function registerAccount(opts: {
       gender: opts.gender,
     })
     rememberAuthSession(user.uid, email, email)
+    // دووبارە دڵنیابە — UI هەمان داتای تۆمارکردن وەردەگرێت
+    stashPendingRegisteredProfile(user.uid, profile)
+    bindRegistrationIdentityToUid(user.uid, {
+      name: profile.name,
+      username: profile.username,
+      email: profile.email,
+      phone: profile.phone,
+      gender: profile.gender,
+      playerId: profile.playerId,
+      createdAtMs: profile.createdAtMs ?? Date.now(),
+    })
+    // intent گشتی بسڕەوە — قوفڵی uid دەمێنێتەوە
+    clearRegistrationIntent()
     return user
+  } catch (err) {
+    clearRegistrationIntent()
+    throw err
   } finally {
     setRegistrationInflight(false)
   }

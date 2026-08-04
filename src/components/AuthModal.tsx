@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { auth } from '../firebase'
 import {
   AUTH_EMAIL_HINT_KEY,
   confirmResetPassword,
@@ -8,7 +9,7 @@ import {
   registerAccount,
   sendResetEmail,
 } from '../services/authService'
-import { validatePhoneNumber, validateUsername, type Gender } from '../services/userService'
+import { validatePhoneNumber, validateUsername, normalizeUsername, lockRegistrationIntent, type Gender } from '../services/userService'
 import gameLogo from '../imports/logo.png'
 import {
   TERMS_FOOTER,
@@ -572,6 +573,14 @@ export default function AuthModal() {
     }
     setBusy(true)
     try {
+      // پێش Auth — ناسنامە قوفڵ بکە بۆ UI
+      lockRegistrationIntent({
+        fullName,
+        username,
+        email: regEmail,
+        phone: regPhone,
+        gender: regGender,
+      })
       await registerAccount({
         fullName,
         username,
@@ -580,6 +589,26 @@ export default function AuthModal() {
         password: regPw,
         gender: regGender,
       })
+      // دڵنیایی زیادە — ئەگەر App هێشتا «یاریزان» پیشان بدات
+      try {
+        window.dispatchEvent(new CustomEvent('kd-reg-profile-ready', {
+          detail: {
+            uid: auth.currentUser?.uid,
+            name: fullName.trim(),
+            username: normalizeUsername(username),
+            email: regEmail.trim().toLowerCase(),
+            phone: regPhone.trim().replace(/[\s\-()]/g, ''),
+            gender: regGender,
+            gold: 500,
+            diamond: 25,
+            isPremium: false,
+            playerLevel: 1,
+            playerXp: 0,
+            hunterLevel: 0,
+            createdAtMs: Date.now(),
+          },
+        }))
+      } catch { /* ignore */ }
     } catch (err) {
       setError(mapFirebaseAuthError(err))
     } finally {
