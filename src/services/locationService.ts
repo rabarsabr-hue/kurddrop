@@ -37,6 +37,7 @@ import {
   ERBIL_NPC_HUB_COORDS,
   BOT_NAME_POOL,
 } from '../data/bots'
+import { isProtectedAccount } from '../data/protectedPlayers'
 
 export {
   BOT_UID_PREFIX,
@@ -166,7 +167,8 @@ export async function setPlayerOffline(uid: string, opts?: { hideFromMap?: boole
     isOnline: false,
     updatedAt: serverTimestamp(),
   }
-  if (opts?.hideFromMap) {
+  // هەژماری تایبەت (00000001) هەرگیز لە نەخشە ناشاردرێتەوە
+  if (opts?.hideFromMap && !isProtectedAccount({ uid })) {
     payload.showMyAvatarOnMap = false
   }
   await setDoc(doc(db, 'locations', uid), payload, { merge: true })
@@ -186,7 +188,10 @@ function parseLocationDoc(docSnapId: string, data: Record<string, unknown>): Pla
   let lat = Number(data.lat)
   let lng = Number(data.lng)
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
-  if (data.showMyAvatarOnMap === false) return null
+  const playerIdEarly = typeof data.playerId === 'string' ? data.playerId.trim() : ''
+  const protectedAcc = isProtectedAccount({ uid: docSnapId, playerId: playerIdEarly })
+  // هەژماری تایبەت هەرگیز فلتەر مەکە ئەگەر showMyAvatarOnMap=falseی کۆن مابێتەوە
+  if (data.showMyAvatarOnMap === false && !protectedAcc) return null
   // Prefer Firestore doc id — bots use kd_bot_XX; keep same shape as real players
   const uid =
     typeof data.uid === 'string' && data.uid && data.uid === docSnapId
@@ -412,10 +417,8 @@ export interface SeedBotsResult {
 }
 
 /**
- * یەکجار: سڕینەوەی هەموو شوێنەکانی نەخشە جگە لە یاریزانی ئێستا،
- * سڕینەوەی بۆتە کۆنەکان، و دانانی ٢٠ بۆت تەنها لەناو هەولێر (≥٣کم مەودا، دوور لە NPC).
- * هەژماری ڕاستەقینەی users ناگۆڕدرێت (تەنها stubsی kd_bot_*).
- * تێبینی: App.tsx بۆتەکان لە نەخشە دەشارێت کاتێک client NPCs چالاکن.
+ * یەکجار: تەنها بۆتەکان لە نەخشە دەسڕێتەوە و ٢٠ بۆتی نوێ دەچێنێت.
+ * شوێنی یاریزانە ڕاستەقینەکان (بەتایبەت 00000001) هەرگیز ناسڕدرێتەوە.
  */
 export async function resetMapPresenceAndSeedBots(preserveUid: string): Promise<SeedBotsResult> {
   const locSnap = await getDocs(collection(db, 'locations'))
@@ -424,6 +427,12 @@ export async function resetMapPresenceAndSeedBots(preserveUid: string): Promise<
 
   locSnap.forEach(d => {
     if (d.id === preserveUid) return
+    const data = d.data() as Record<string, unknown>
+    const playerId = typeof data.playerId === 'string' ? data.playerId.trim() : ''
+    // تەنها بۆتەکان بسڕەوە — یاریزانی ڕاستەقینە / تایبەت بمێننەوە
+    const isBot = data.isBot === true || isBotPlayerUid(d.id)
+    if (!isBot) return
+    if (isProtectedAccount({ uid: d.id, playerId })) return
     deleteOps.push(deleteDoc(doc(db, 'locations', d.id)))
     removedOtherLocations += 1
   })
@@ -525,11 +534,11 @@ export async function resetMapPresenceAndSeedBots(preserveUid: string): Promise<
       dailyBonusLastClaimMs: null,
       settings: { ...DEFAULT_USER_SETTINGS },
       stats: { ...DEFAULT_PLAYER_STATS },
-      playerLevel: 1 + (i % 8),
+      playerLevel: 1,
       playerXp: 0,
       totalWealth: computeTotalWealth(wallet.gold, wallet.diamond),
-      giftsSentScore: 10 + (i * 7) % 80,
-      leaderboardEpoch: 3,
+      giftsSentScore: 0,
+      leaderboardEpoch: 4,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }, { merge: true })
@@ -543,11 +552,11 @@ export async function resetMapPresenceAndSeedBots(preserveUid: string): Promise<
       ...wallet,
       avatarUrl: null,
       avatar3d,
-      playerLevel: 1 + (i % 8),
+      playerLevel: 1,
       playerXp: 0,
       totalWealth: computeTotalWealth(wallet.gold, wallet.diamond),
-      giftsSentScore: 10 + (i * 7) % 80,
-      leaderboardEpoch: 3,
+      giftsSentScore: 0,
+      leaderboardEpoch: 4,
       isBot: true,
       updatedAt: serverTimestamp(),
     }, { merge: true })

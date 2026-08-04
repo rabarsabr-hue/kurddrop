@@ -5025,14 +5025,14 @@
       display: none !important;
     }
 
-    /* چاتی گشتی — لە ژێر هێدەر تا خوارەوە، کردنەوەی نەرم */
+    /* چاتی گشتی — تەواو لە ژێر هێدەر (بێ overlap)، تا خوارەوە */
     .kd-map-chat-overlay {
       position: absolute;
-      top: calc(68px + env(safe-area-inset-top, 0px));
+      top: calc(var(--kd-header-full-bottom, var(--kd-header-bottom, 140px)) + 6px);
       left: 0;
       right: 0;
       bottom: 0;
-      z-index: 99999;
+      z-index: 100050;
       display: flex;
       align-items: stretch;
       justify-content: center;
@@ -5045,7 +5045,7 @@
       -webkit-backdrop-filter: blur(10px) saturate(1.15);
       direction: rtl;
       opacity: 0;
-      transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1), padding-bottom 0.16s ease-out;
+      transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1), padding-bottom 0.16s ease-out, top 0.16s ease-out;
     }
     .kd-map-chat-overlay.is-in { opacity: 1; }
     .kd-map-chat-overlay.is-closing { opacity: 0; pointer-events: none; }

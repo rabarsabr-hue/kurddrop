@@ -1,5 +1,5 @@
 /**
- * ٢٠ کارەکتەری چالاک — هەولێر، وەک یاریزانی ڕاستەقینە:
+ * ٥ کارەکتەری چالاک — هەولێر، وەک یاریزانی ڕاستەقینە:
  * ئۆنلاین/ئۆفلاین، دیاری ڕۆژانە، چەرخی بەخت، بەخشین بە نرخ، sync بۆ Firestore
  */
 
@@ -48,7 +48,7 @@ export type { NpcDialect }
 export { NPC_COMEDY_MESSAGES, PUBLIC_CHAT_ONE_LINERS }
 
 export const NPC_UID_PREFIX = 'kd_npc_'
-export const NPC_COUNT = 20
+export const NPC_COUNT = 5
 export const NPC_TOTAL = NPC_COUNT
 /** کەمترین مەودا ٣٫٥کم — دوورتر بۆ ئەوەی تێکەڵ نەبن */
 export const NPC_MIN_SEPARATION_M = 3500
@@ -785,13 +785,13 @@ export function createInitialNpcStates(count = NPC_COUNT): LiveNpcState[] {
     const person = uniqueNpcName(i)
     const interactive = hashUnit(`interactive:${i}`) < NPC_INTERACTIVE_RATIO
     const walker = false
-    const hunterLevel = Math.min(HUNTER_RANK_COUNT - 1, Math.floor(hashUnit(`hlvl:${i}`) * 9))
-    const dropsOpenedByType = dropsOpenedForLevel(hunterLevel)
+    // سەرەتا وەک یاریزانی تازە — ئاست ١ + باڵانسی بەخێرهاتن
+    const hunterLevel = 0
+    const dropsOpenedByType = { ...EMPTY_DROPS_OPENED }
     const stats = { ...DEFAULT_PLAYER_STATS }
-    const wallet = seedNpcWallet(i, hunterLevel, totalDropsOpened(dropsOpenedByType))
-    const gold = Math.max(WELCOME_BONUS_GOLD, wallet.gold)
-    const diamond = Math.max(WELCOME_BONUS_DIAMOND, wallet.diamond)
-    const playerLevel = Math.max(1, 1 + Math.floor(hunterLevel * 1.5 + hashUnit(`plvl:${i}`) * 4))
+    const gold = WELCOME_BONUS_GOLD
+    const diamond = WELCOME_BONUS_DIAMOND
+    const playerLevel = 1
     const isOnline = hashUnit(`online0:${i}`) < NPC_INITIAL_ONLINE_RATIO
     const sessionSeed = `init-sess:${i}:${boot}`
     states.push({

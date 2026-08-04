@@ -2459,19 +2459,30 @@ export function formatPlayTime(ms: number): string {
   return `${rounded} کاتژمێر`
 }
 
-/** بەرواری دروستکردنی هەژمار */
+/** بەرواری دروستکردنی هەژمار — هەمیشە کوردی (بێ پشتبەستن بە Intl locale) */
+const KU_MONTHS = [
+  'کانوونی دووەم',
+  'شوبات',
+  'ئازار',
+  'نیسان',
+  'ئایار',
+  'حوزەیران',
+  'تەممووز',
+  'ئاب',
+  'ئەیلوول',
+  'تشرینی یەکەم',
+  'تشرینی دووەم',
+  'کانوونی یەکەم',
+] as const
+
 export function formatAccountCreatedAt(ms: number | null | undefined): string {
   if (!ms || !Number.isFinite(ms) || ms <= 0) return '—'
-  try {
-    return new Intl.DateTimeFormat('ckb-IQ', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    }).format(new Date(ms))
-  } catch {
-    const d = new Date(ms)
-    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
-  }
+  const d = new Date(ms)
+  if (!Number.isFinite(d.getTime())) return '—'
+  const day = d.getDate()
+  const month = KU_MONTHS[d.getMonth()] ?? String(d.getMonth() + 1)
+  const year = d.getFullYear()
+  return `${day}ی ${month}ی ${year}`
 }
 
 export const DM_EMOJI_LIST = ['😀', '😂', '😍', '😎', '🤔', '😢', '😡', '👍', '👎', '❤️', '🔥', '⭐', '🎉', '🎮', '💎', '👑', '🫡', '🤝', '👋', '🙏']

@@ -6,24 +6,33 @@ import {
   onSnapshot,
   doc,
   getDoc,
+  getDocs,
   updateDoc,
   setDoc,
+  deleteDoc,
   increment,
   serverTimestamp,
   deleteField,
+  writeBatch,
+  runTransaction,
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import {
   computeTotalWealth,
+  WELCOME_BONUS_GOLD,
+  WELCOME_BONUS_DIAMOND,
+  DEFAULT_PLAYER_STATS,
   type Gender,
   type PlayerStats,
 } from './userService'
 import type { DropsOpenedByType } from '../hunterLevel'
+import { EMPTY_DROPS_OPENED } from '../hunterLevel'
 import {
   normalizeAvatar3d,
   type Avatar3DCustomization,
 } from '../fullBody3dAvatar'
 import { isProtectedAccount } from '../data/protectedPlayers'
+import { NPC_COUNT, NPC_UID_PREFIX } from '../npcData'
 
 export interface LeaderboardEntry {
   uid: string
@@ -60,11 +69,18 @@ export interface RoyalLeaderboardEntry {
 export type RoyalLeaderboardTab = 'wealth' | 'level' | 'gifters'
 
 /** Bump to wipe Rich List / gifter scores and restart tracking from zero. */
-export const LEADERBOARD_EPOCH = 3
+export const LEADERBOARD_EPOCH = 4
+
+/** وەشانی factory ـی ڕیزبەندی دەوڵەمەندەکان (٣ تاب) */
+export const LEADERBOARD_FACTORY_RESET_VERSION = 4
 
 const LEADERBOARD_LIMIT = 20
 /** کەمێک زیاتر دەگرین تا دوای لابردنی هەژماری پارێزراو هێشتا ٢٠ دانە بمێنێتەوە */
 const LEADERBOARD_FETCH = LEADERBOARD_LIMIT + 10
+
+function isFakeLeaderboardUid(uid: string): boolean {
+  return uid.startsWith('kd_npc_') || uid.startsWith('kd_bot_')
+}
 
 function isHiddenFromLeaderboard(docId: string, data: Record<string, unknown>): boolean {
   const uid = typeof data.uid === 'string' ? data.uid : (/^\d{8}$/.test(docId) ? '' : docId)
@@ -73,6 +89,9 @@ function isHiddenFromLeaderboard(docId: string, data: Record<string, unknown>): 
     : (/^\d{8}$/.test(docId) ? docId : '')
   if (isProtectedAccount({ uid, playerId })) return true
   if (data.hideFromLeaderboards === true) return true
+  // بۆتەکانی kd_bot_ لە ڕیزبەندی دەوڵەمەندەکان دەرناچن — تەنها ٥ NPC
+  if (data.isBot === true || uid.startsWith('kd_bot_') || docId.startsWith('kd_bot_')) return true
+  if (/^9\d{7}$/.test(playerId)) return true
   return false
 }
 
@@ -210,7 +229,7 @@ export function subscribeToGifterLeaderboard(
   }, err => console.error('Gifter leaderboard failed:', err))
 }
 
-/** Reset leaderboard scores when epoch bumps — wealth + gifter counters (wallet untouched). */
+/** Reset leaderboard scores when epoch bumps — wealth + gifter counters (wallet untouched for real players). */
 export async function ensureLeaderboardEpoch(uid: string): Promise<void> {
   if (!uid) return
   const userRef = doc(db, 'users', uid)
@@ -218,11 +237,22 @@ export async function ensureLeaderboardEpoch(uid: string): Promise<void> {
   const data = snap.data() ?? {}
   const epoch = Number(data.leaderboardEpoch) || 0
   if (epoch >= LEADERBOARD_EPOCH) return
-  const patch = {
+  const gold = Number(data.gold) || 0
+  const diamond = Number(data.diamond) || 0
+  const patch: Record<string, unknown> = {
     leaderboardEpoch: LEADERBOARD_EPOCH,
-    totalWealth: 0,
+    totalWealth: isFakeLeaderboardUid(uid) ? computeTotalWealth(WELCOME_BONUS_GOLD, WELCOME_BONUS_DIAMOND) : 0,
     giftsSentScore: 0,
     updatedAt: serverTimestamp(),
+  }
+  if (isFakeLeaderboardUid(uid)) {
+    patch.gold = WELCOME_BONUS_GOLD
+    patch.diamond = WELCOME_BONUS_DIAMOND
+    patch.playerLevel = 1
+    patch.playerXp = 0
+    patch.hunterLevel = 0
+    patch.stats = { ...DEFAULT_PLAYER_STATS }
+    patch.dropsOpenedByType = { ...EMPTY_DROPS_OPENED }
   }
   await setDoc(userRef, patch, { merge: true })
   const playerId = typeof data.playerId === 'string' ? data.playerId.trim() : ''
@@ -231,10 +261,184 @@ export async function ensureLeaderboardEpoch(uid: string): Promise<void> {
   }
 }
 
+/**
+ * Factory reset بۆ ٣ تابـی دەوڵەمەندەکان:
+ * خاڵی سامان/بەخشەر سفر، فەیکە زیادەکان دەسڕێتەوە، تەنها ٥ NPC دەمێنێتەوە لە سەرەتا.
+ */
+export async function runLeaderboardFactoryResetIfNeeded(): Promise<{
+  ran: boolean
+  prunedFakes: number
+  resetPlayers: number
+}> {
+  const metaRef = doc(db, 'meta', 'leaderboardFactoryReset')
+  let shouldRun = false
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(metaRef)
+      const current = Number(snap.exists() ? snap.data()?.version : 0) || 0
+      if (current >= LEADERBOARD_FACTORY_RESET_VERSION) {
+        shouldRun = false
+        return
+      }
+      tx.set(metaRef, {
+        version: LEADERBOARD_FACTORY_RESET_VERSION,
+        atMs: Date.now(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true })
+      shouldRun = true
+    })
+  } catch (err) {
+    console.error('leaderboard factory reset lock failed:', err)
+    return { ran: false, prunedFakes: 0, resetPlayers: 0 }
+  }
+  if (!shouldRun) return { ran: false, prunedFakes: 0, resetPlayers: 0 }
+
+  try {
+    const result = await factoryResetLeaderboardsAndPruneFakes()
+    return { ran: true, ...result }
+  } catch (err) {
+    console.error('factoryResetLeaderboardsAndPruneFakes failed:', err)
+    try {
+      await setDoc(metaRef, { version: LEADERBOARD_FACTORY_RESET_VERSION - 1, failedAtMs: Date.now() }, { merge: true })
+    } catch { /* ignore */ }
+    return { ran: false, prunedFakes: 0, resetPlayers: 0 }
+  }
+}
+
+/** سڕینەوەی فەیکی زیادە + سفرکردنەوەی خاڵەکانی ڕیزبەندی */
+export async function factoryResetLeaderboardsAndPruneFakes(): Promise<{
+  prunedFakes: number
+  resetPlayers: number
+}> {
+  let prunedFakes = 0
+  let resetPlayers = 0
+  const starterWealth = computeTotalWealth(WELCOME_BONUS_GOLD, WELCOME_BONUS_DIAMOND)
+
+  const playersSnap = await getDocs(collection(db, 'players'))
+  const deleteOps: Array<Promise<unknown>> = []
+  const resetChunks: Array<Array<{ ref: ReturnType<typeof doc>; payload: Record<string, unknown> }>> = [[]]
+
+  const pushReset = (ref: ReturnType<typeof doc>, payload: Record<string, unknown>) => {
+    const last = resetChunks[resetChunks.length - 1]!
+    if (last.length >= 400) resetChunks.push([{ ref, payload }])
+    else last.push({ ref, payload })
+  }
+
+  playersSnap.forEach((d) => {
+    const data = d.data() as Record<string, unknown>
+    const uid = typeof data.uid === 'string' ? data.uid : ''
+    const playerId = typeof data.playerId === 'string' ? data.playerId.trim() : d.id
+    const isBot = data.isBot === true || uid.startsWith('kd_bot_') || d.id.startsWith('kd_bot_') || /^9\d{7}$/.test(playerId)
+    const npcMatch = /^kd_npc_(\d+)$/.exec(uid)
+    let npcIndex = -1
+    if (npcMatch) {
+      npcIndex = Number(npcMatch[1])
+    } else if (/^8\d{7}$/.test(playerId)) {
+      npcIndex = Number(playerId.slice(1)) - 1
+    }
+
+    // بۆتەکان و NPCـی زیادە (>٥) بسڕەوە لە players
+    if (isBot || (npcIndex >= NPC_COUNT)) {
+      deleteOps.push(deleteDoc(d.ref))
+      prunedFakes += 1
+      if (uid.startsWith('kd_npc_') || uid.startsWith('kd_bot_')) {
+        deleteOps.push(deleteDoc(doc(db, 'users', uid)).catch(() => {}))
+      }
+      return
+    }
+
+    if (isProtectedAccount({ uid, playerId })) return
+
+    // ٥ NPC ـی ماوە — سەرەتای تازە
+    if (npcIndex >= 0 && npcIndex < NPC_COUNT) {
+      pushReset(d.ref, {
+        uid: `${NPC_UID_PREFIX}${npcIndex}`,
+        playerId: `8${String(npcIndex + 1).padStart(7, '0')}`,
+        gold: WELCOME_BONUS_GOLD,
+        diamond: WELCOME_BONUS_DIAMOND,
+        playerLevel: 1,
+        playerXp: 0,
+        hunterLevel: 0,
+        totalWealth: starterWealth,
+        giftsSentScore: 0,
+        leaderboardEpoch: LEADERBOARD_EPOCH,
+        stats: { ...DEFAULT_PLAYER_STATS },
+        dropsOpenedByType: { ...EMPTY_DROPS_OPENED },
+        isBot: false,
+        isNpc: deleteField(),
+        updatedAt: serverTimestamp(),
+      })
+      pushReset(doc(db, 'users', `${NPC_UID_PREFIX}${npcIndex}`), {
+        uid: `${NPC_UID_PREFIX}${npcIndex}`,
+        playerId: `8${String(npcIndex + 1).padStart(7, '0')}`,
+        gold: WELCOME_BONUS_GOLD,
+        diamond: WELCOME_BONUS_DIAMOND,
+        playerLevel: 1,
+        playerXp: 0,
+        hunterLevel: 0,
+        totalWealth: starterWealth,
+        giftsSentScore: 0,
+        leaderboardEpoch: LEADERBOARD_EPOCH,
+        stats: { ...DEFAULT_PLAYER_STATS },
+        dropsOpenedByType: { ...EMPTY_DROPS_OPENED },
+        isBot: false,
+        updatedAt: serverTimestamp(),
+      })
+      resetPlayers += 1
+      return
+    }
+
+    // یاریزانی ڕاستەقینە — تەنها خاڵی ڕیزبەندی سفر (باڵانس/ئاستی یاری دەمێنێتەوە)
+    pushReset(d.ref, {
+      totalWealth: 0,
+      giftsSentScore: 0,
+      leaderboardEpoch: LEADERBOARD_EPOCH,
+      updatedAt: serverTimestamp(),
+    })
+    if (uid && !isFakeLeaderboardUid(uid)) {
+      pushReset(doc(db, 'users', uid), {
+        totalWealth: 0,
+        giftsSentScore: 0,
+        leaderboardEpoch: LEADERBOARD_EPOCH,
+        updatedAt: serverTimestamp(),
+      })
+    }
+    resetPlayers += 1
+  })
+
+  // users ـی فەیکی بێ players
+  const usersSnap = await getDocs(collection(db, 'users'))
+  usersSnap.forEach((d) => {
+    if (!d.id.startsWith('kd_npc_') && !d.id.startsWith('kd_bot_')) return
+    if (d.id.startsWith('kd_bot_')) {
+      deleteOps.push(deleteDoc(d.ref))
+      prunedFakes += 1
+      return
+    }
+    const idx = Number(d.id.slice(NPC_UID_PREFIX.length))
+    if (!Number.isFinite(idx) || idx >= NPC_COUNT) {
+      deleteOps.push(deleteDoc(d.ref))
+      prunedFakes += 1
+    }
+  })
+
+  await Promise.all(deleteOps)
+
+  for (const chunk of resetChunks) {
+    if (chunk.length === 0) continue
+    const batch = writeBatch(db)
+    for (const row of chunk) {
+      batch.set(row.ref, row.payload, { merge: true })
+    }
+    await batch.commit()
+  }
+
+  return { prunedFakes, resetPlayers }
+}
+
 /** Reset all map NPC bot leaderboard rows to epoch baseline. */
 export async function resetAllNpcLeaderboardScores(): Promise<void> {
-  // No-op: wiping NPC progress on login was causing fake characters to vanish / reset
-  return
+  await factoryResetLeaderboardsAndPruneFakes()
 }
 
 /** Stable in-game Player ID for client NPCs (shown in rich list). */
@@ -299,13 +503,15 @@ export async function upsertNpcLeaderboardPresence(
         gender: npc.gender,
         avatarUrl: npc.avatarUrl ?? null,
         avatar3d: npc.avatar3d ?? null,
-        gold,
-        diamond,
-        playerLevel,
-        playerXp,
-        hunterLevel,
-        ...(npc.stats ? { stats: npc.stats } : {}),
-        ...(npc.dropsOpenedByType ? { dropsOpenedByType: npc.dropsOpenedByType } : {}),
+        gold: forceFresh ? Math.max(0, Math.floor(npc.gold ?? WELCOME_BONUS_GOLD)) : gold,
+        diamond: forceFresh ? Math.max(0, Math.floor(npc.diamond ?? WELCOME_BONUS_DIAMOND)) : diamond,
+        playerLevel: forceFresh ? 1 : playerLevel,
+        playerXp: forceFresh ? 0 : playerXp,
+        hunterLevel: forceFresh ? 0 : hunterLevel,
+        ...(npc.stats || forceFresh ? { stats: forceFresh ? { ...DEFAULT_PLAYER_STATS } : npc.stats } : {}),
+        ...(npc.dropsOpenedByType || forceFresh
+          ? { dropsOpenedByType: forceFresh ? { ...EMPTY_DROPS_OPENED } : npc.dropsOpenedByType }
+          : {}),
         ...(typeof npc.dailyBonusDay === 'number' ? { dailyBonusDay: npc.dailyBonusDay } : {}),
         ...(npc.dailyBonusLastClaimMs !== undefined
           ? { dailyBonusLastClaimMs: npc.dailyBonusLastClaimMs }
@@ -316,7 +522,12 @@ export async function upsertNpcLeaderboardPresence(
           : {}),
         ...(typeof npc.isOnline === 'boolean' ? { isOnline: npc.isOnline } : {}),
         ...(typeof npc.lastSeenMs === 'number' ? { lastSeenMs: npc.lastSeenMs } : {}),
-        totalWealth: wealthNow,
+        totalWealth: forceFresh
+          ? computeTotalWealth(
+            Math.max(0, Math.floor(npc.gold ?? WELCOME_BONUS_GOLD)),
+            Math.max(0, Math.floor(npc.diamond ?? WELCOME_BONUS_DIAMOND)),
+          )
+          : wealthNow,
         giftsSentScore: forceFresh ? 0 : prevGifts,
         leaderboardEpoch: LEADERBOARD_EPOCH,
         isNpc: deleteField(),
