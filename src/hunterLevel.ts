@@ -95,6 +95,17 @@ export function computeHunterLevel(counts: DropsOpenedByType): number {
   return Math.floor(hunterLevelProgress(counts))
 }
 
+/** ئاستی ڕاوکەر = max(پاشەکەوتی هەڵگیراو، حیساب لە درۆپ) — بۆ UI و پرۆفایلی گشتی */
+export function resolveHunterLevel(
+  storedLevel: unknown,
+  dropsOpenedByType?: DropsOpenedByType | null,
+): number {
+  const computed = dropsOpenedByType ? computeHunterLevel(dropsOpenedByType) : 0
+  const stored = Number(storedLevel)
+  const storedSafe = Number.isFinite(stored) && stored >= 0 ? Math.floor(stored) : 0
+  return Math.max(0, storedSafe, computed)
+}
+
 /**
  * Drop counts that yield at least `level` (type-5: ١ درۆپ = ١ ئاست).
  * Used for bot seeding / floor after Kurdistan pass.

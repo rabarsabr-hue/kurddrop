@@ -1,20 +1,13 @@
 /**
- * هەژمارە پارێزراوەکان — ناتوانرێت بلۆک/دیاری/کلیک بکرێن.
- * زێڕ/ئەڵماس جێگیرن و بە خەرجکردن کەم نابن.
- * شوێن بە GPS ـی ڕاستەقینەی خاوەن هەژمار دیاری دەکرێت.
+ * هەژماری تایبەت — تەنها باڵانسی زێڕ/ئەڵماس جێگیرە.
+ * لەسەر نەخشە و کارلێک وەک یاریزانی ئاسایی دەردەکەوێت؛ شوێن بە GPS ـی خاوەن هەژمار.
  */
 
-/** قەڵای هەولێر — ناوەند (بۆ ئاماژەی نەخشە / کارگە — نا بۆ قفڵکردنی GPS) */
-export const CITADEL_ANCHOR = {
-  lat: 36.1911,
-  lng: 44.0092,
-} as const
-
-/** باڵانسی جێگیری هەژماری پارێزراو — هەرگیز کەم نابێتەوە */
-export const PROTECTED_LOCKED_GOLD = 99999
+/** باڵانسی جێگیری هەژماری تایبەت — هەرگیز کەم نابێتەوە */
+export const PROTECTED_LOCKED_GOLD = 999999
 export const PROTECTED_LOCKED_DIAMOND = 99999
 
-/** ئایدی ژمارەیی پارێزراو */
+/** ئایدی ژمارەیی تایبەت */
 export const PROTECTED_PLAYER_IDS = new Set<string>(['00000001'])
 
 /** Firebase uid ـی ناسراو (بۆ کاتێک playerId لە location نەبێت) */
@@ -41,11 +34,7 @@ export function isProtectedAccount(opts: {
   return isProtectedUid(opts.uid) || isProtectedPlayerId(opts.playerId)
 }
 
-export function citadelCoords(): { lat: number; lng: number } {
-  return { lat: CITADEL_ANCHOR.lat, lng: CITADEL_ANCHOR.lng }
-}
-
-/** زێڕ/ئەڵماس بۆ هەژماری پارێزراو هەمیشە جێگیر دەکاتەوە */
+/** زێڕ/ئەڵماس بۆ هەژماری تایبەت هەمیشە جێگیر دەکاتەوە */
 export function lockProtectedWallet<T extends { gold: number; diamond: number }>(
   wallet: T,
   opts?: { uid?: string | null; playerId?: string | null },

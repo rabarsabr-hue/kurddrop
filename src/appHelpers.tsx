@@ -809,11 +809,11 @@ export const MAP_TOUCH_DRAG_THRESHOLD_PX = 8
 /** گەورەکردنی نەرمی ئاڤاتار لەسەر نەخشە کاتێک هەڵبژێردراوە */
 export const MAP_AVATAR_FOCUS_SCALE = 1.42
 
-/** ماوەی ئەنیمەیشنی داخستنی بۆکسی کارەکتەر */
-export const PLAYER_SHEET_ANIM_MS = 480
+/** ماوەی ئەنیمەیشنی داخستنی بۆکسی کارەکتەر — خێرا و نەرم */
+export const PLAYER_SHEET_ANIM_MS = 220
 
 /** ئەنیمەیشنی iOS — کرانەوە / داخرانی بۆکس */
-export const IOS_SHEET_EASE = 'cubic-bezier(0.32, 0.72, 0, 1)'
+export const IOS_SHEET_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)'
 
 /** نوێکردنەوەی پۆتانی NPC / layout — ١٥٠–٢٠٠ms (نەک هەر frame) */
 export const NPC_MARKER_THROTTLE_MS = 175
@@ -2448,14 +2448,30 @@ export type GameAlertState = {
 
 export const REWARD_TOAST_MS = 5_000
 
-/** کاتی یاری تەنها بە خولەک — نموونە: «١٢٣ خولەک» */
-
+/** کاتی یاری بە کاتژمێر — کەمتر لە ١ کاتژمێر بە پۆینت (نموونە: ٠.٤ کاتژمێر) */
 export function formatPlayTime(ms: number): string {
+  const hours = Math.max(0, ms / 3_600_000)
+  if (hours < 1) {
+    const pts = Math.round(hours * 10) / 10
+    return `${pts} کاتژمێر`
+  }
+  const rounded = Math.round(hours * 10) / 10
+  return `${rounded} کاتژمێر`
+}
 
-  const totalMinutes = Math.max(0, Math.floor(ms / 60000))
-
-  return `${totalMinutes} خولەک`
-
+/** بەرواری دروستکردنی هەژمار */
+export function formatAccountCreatedAt(ms: number | null | undefined): string {
+  if (!ms || !Number.isFinite(ms) || ms <= 0) return '—'
+  try {
+    return new Intl.DateTimeFormat('ckb-IQ', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(new Date(ms))
+  } catch {
+    const d = new Date(ms)
+    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
+  }
 }
 
 export const DM_EMOJI_LIST = ['😀', '😂', '😍', '😎', '🤔', '😢', '😡', '👍', '👎', '❤️', '🔥', '⭐', '🎉', '🎮', '💎', '👑', '🫡', '🤝', '👋', '🙏']
@@ -2531,6 +2547,10 @@ export const FALLBACK_PROFILE: UserProfile = {
   playerXp: 0,
 
   welcomeBonusGranted: true,
+
+  createdAtMs: null,
+
+  giftsSentScore: 0,
 
 }
 
@@ -3523,9 +3543,9 @@ export const Sheet = memo(function Sheet({ active, onClose, title, children, hei
 
     if (!panelRef.current) return
 
-    panelRef.current.style.transition = `transform 0.42s ${IOS_SHEET_EASE}`
+    panelRef.current.style.transition = `transform 0.22s ${IOS_SHEET_EASE}`
 
-    if (dy > 80) { panelRef.current.style.transform = 'translateY(100%)'; setTimeout(onClose, 380) }
+    if (dy > 80) { panelRef.current.style.transform = 'translateY(100%)'; setTimeout(onClose, 200) }
 
     else panelRef.current.style.transform = 'translateY(0)'
 
@@ -3549,7 +3569,7 @@ export const Sheet = memo(function Sheet({ active, onClose, title, children, hei
 
         opacity: active ? 1 : 0, pointerEvents: active ? 'auto' : 'none',
 
-        transition: 'opacity 0.35s ease',
+        transition: 'opacity 0.18s ease',
 
       }}
 
@@ -3597,7 +3617,9 @@ export const Sheet = memo(function Sheet({ active, onClose, title, children, hei
 
           transform: active ? 'translateY(0)' : 'translateY(100%)',
 
-          transition: `transform 0.45s ${IOS_SHEET_EASE}`,
+          transition: `transform 0.22s ${IOS_SHEET_EASE}`,
+
+          willChange: 'transform',
 
         }}
 
@@ -3664,9 +3686,18 @@ export function SettingRow({ label, defaultOn = true, checked, onChange }: {
 
       <span style={{ color: '#f8fafc' }}>{label}</span>
 
-      <div onClick={toggle} style={{ width: 42, height: 22, background: on ? '#00f0ff' : 'rgba(255,255,255,0.15)', borderRadius: 12, position: 'relative', cursor: 'pointer', border: `1px solid ${on ? '#00f0ff' : 'rgba(255,255,255,0.2)'}`, transition: 'background 0.2s', flexShrink: 0 }}>
+      <div
+        role="switch"
+        aria-checked={on}
+        onClick={toggle}
+        style={{
+          width: 42, height: 22, background: on ? '#00f0ff' : 'rgba(255,255,255,0.15)', borderRadius: 12,
+          position: 'relative', cursor: 'pointer', border: `1px solid ${on ? '#00f0ff' : 'rgba(255,255,255,0.2)'}`,
+          transition: 'background 0.12s ease, border-color 0.12s ease', flexShrink: 0, touchAction: 'manipulation',
+        }}
+      >
 
-        <div style={{ position: 'absolute', width: 18, height: 18, background: on ? '#040812' : '#fff', borderRadius: '50%', top: 1, left: 1, transition: 'transform 0.2s', transform: on ? 'translateX(20px)' : 'none' }} />
+        <div style={{ position: 'absolute', width: 18, height: 18, background: on ? '#040812' : '#fff', borderRadius: '50%', top: 1, left: 1, transition: 'transform 0.14s cubic-bezier(0.22, 1, 0.36, 1)', transform: on ? 'translateX(20px)' : 'none', willChange: 'transform' }} />
 
       </div>
 
@@ -3740,6 +3771,7 @@ export type NearbyPlayerRowProps = {
   lng: number
   distM: number
   isOnline: boolean
+  lastSeenMs?: number | null
   avatarUrl: string | null
   avatar3d: Avatar3DCustomization | null
   gender: Gender
@@ -3749,8 +3781,11 @@ export type NearbyPlayerRowProps = {
 }
 
 export const NearbyPlayerRow = memo(function NearbyPlayerRow({
-  uid, name, lat, lng, distM, isOnline, avatarUrl, avatar3d, gender, skinId, borderId, onFocus,
+  uid, name, lat, lng, distM, isOnline, lastSeenMs, avatarUrl, avatar3d, gender, skinId, borderId, onFocus,
 }: NearbyPlayerRowProps) {
+  const statusText = isOnline
+    ? 'ئۆنلاین'
+    : formatLastSeenKu(lastSeenMs, Date.now())
   return (
     <button
       type="button"
@@ -3768,6 +3803,7 @@ export const NearbyPlayerRow = memo(function NearbyPlayerRow({
         width: 40, height: 40, borderRadius: '50%', flexShrink: 0, overflow: 'hidden',
         border: `1.5px solid ${isOnline ? 'rgba(74,222,128,0.65)' : 'rgba(148,163,184,0.35)'}`,
         boxShadow: isOnline ? '0 0 10px rgba(74,222,128,0.35)' : 'none',
+        opacity: isOnline ? 1 : 0.85,
       }}>
         <HeadShotAvatar
           sizePx={40}
@@ -3783,7 +3819,7 @@ export const NearbyPlayerRow = memo(function NearbyPlayerRow({
         <div style={{ fontSize: 12, fontWeight: 900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: isOnline ? '#4ade80' : '#94a3b8', flexShrink: 0 }} />
-          <span style={{ fontSize: 9, fontWeight: 800, color: isOnline ? '#86efac' : '#94a3b8' }}>{isOnline ? 'ئۆنلاین' : 'ئۆفلاین'}</span>
+          <span style={{ fontSize: 9, fontWeight: 800, color: isOnline ? '#86efac' : '#94a3b8' }}>{statusText}</span>
           <span style={{ fontSize: 9, fontWeight: 800, color: '#7dd3fc', direction: 'ltr' }}>
             {distM < 1000 ? `${distM} م` : `${(distM / 1000).toFixed(2)} کم`}
           </span>
@@ -3799,6 +3835,7 @@ export const NearbyPlayerRow = memo(function NearbyPlayerRow({
   && prev.distM === next.distM
   && prev.name === next.name
   && prev.isOnline === next.isOnline
+  && prev.lastSeenMs === next.lastSeenMs
   && prev.avatarUrl === next.avatarUrl
   && prev.gender === next.gender
   && prev.skinId === next.skinId

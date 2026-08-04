@@ -7,8 +7,6 @@ import {
   updateProfile,
   updatePassword,
   updateEmail,
-  setPersistence,
-  browserLocalPersistence,
   reauthenticateWithCredential,
   EmailAuthProvider,
   deleteUser,
@@ -19,6 +17,8 @@ import {
   createRegisteredUserProfile,
   resolveEmailFromLoginIdentifier,
   deleteUserProfileData,
+  setRegistrationInflight,
+  type Gender,
 } from './userService'
 
 export type AuthTab = 'login' | 'register' | 'reset'
@@ -26,6 +26,50 @@ export type ResetStep = 'email' | 'code' | 'done'
 
 export const AUTH_REMEMBER_KEY = 'kd_auth_remember'
 export const AUTH_EMAIL_HINT_KEY = 'kd_auth_email'
+/** دواین UID بۆ کردنەوەی خێرای یاری پێش onAuthStateChanged */
+export const AUTH_LAST_UID_KEY = 'kd_auth_last_uid'
+/** کاشی ناسنامە → ئیمەیڵ بۆ چوونەژوورەوەی خێرا */
+export const AUTH_ID_EMAIL_CACHE_KEY = 'kd_auth_id_email_map'
+
+function rememberAuthSession(uid: string, identifierHint: string, email: string): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(AUTH_REMEMBER_KEY, '1')
+    localStorage.setItem(AUTH_EMAIL_HINT_KEY, identifierHint)
+    localStorage.setItem(AUTH_LAST_UID_KEY, uid)
+    const key = identifierHint.trim().toLowerCase()
+    if (key && email) {
+      const raw = localStorage.getItem(AUTH_ID_EMAIL_CACHE_KEY)
+      const map = raw ? (JSON.parse(raw) as Record<string, string>) : {}
+      map[key] = email
+      if (key.includes('@') === false) map[email] = email
+      localStorage.setItem(AUTH_ID_EMAIL_CACHE_KEY, JSON.stringify(map))
+    }
+  } catch { /* ignore */ }
+}
+
+function cachedEmailForIdentifier(identifier: string): string | null {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const key = identifier.trim().toLowerCase()
+    if (!key) return null
+    if (key.includes('@')) return key
+    const raw = localStorage.getItem(AUTH_ID_EMAIL_CACHE_KEY)
+    if (!raw) return null
+    const map = JSON.parse(raw) as Record<string, string>
+    const email = map[key]
+    return typeof email === 'string' && email.includes('@') ? email : null
+  } catch {
+    return null
+  }
+}
+
+export function clearAuthSessionHints(): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.removeItem(AUTH_LAST_UID_KEY)
+  } catch { /* ignore */ }
+}
 
 export function mapFirebaseAuthError(err: unknown): string {
   const code = typeof err === 'object' && err && 'code' in err
@@ -74,15 +118,26 @@ export async function loginWithIdentifier(opts: {
   password: string
   rememberMe?: boolean
 }): Promise<User> {
-  // هەمیشە LOCAL — تەنها چوونەدەرەوە session دەسڕێتەوە
-  await setPersistence(auth, browserLocalPersistence)
-  const email = await resolveEmailFromLoginIdentifier(opts.identifier)
-  const { user } = await signInWithEmailAndPassword(auth, email, opts.password)
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(AUTH_REMEMBER_KEY, '1')
-    localStorage.setItem(AUTH_EMAIL_HINT_KEY, opts.identifier.trim())
+  // Persistence لە firebase.ts دانراوە — مەچاوەڕوانە لەسەر هەر چوونەژوورەوەیەک
+  const hint = opts.identifier.trim()
+  const cached = cachedEmailForIdentifier(hint)
+  let email = cached ?? await resolveEmailFromLoginIdentifier(opts.identifier)
+  try {
+    const { user } = await signInWithEmailAndPassword(auth, email, opts.password)
+    rememberAuthSession(user.uid, hint, email)
+    return user
+  } catch (err) {
+    // کاشی کۆن — دووبارە لە Firestore بگەڕێ
+    if (cached) {
+      email = await resolveEmailFromLoginIdentifier(opts.identifier)
+      if (email !== cached) {
+        const { user } = await signInWithEmailAndPassword(auth, email, opts.password)
+        rememberAuthSession(user.uid, hint, email)
+        return user
+      }
+    }
+    throw err
   }
-  return user
 }
 
 export async function registerAccount(opts: {
@@ -91,26 +146,29 @@ export async function registerAccount(opts: {
   email: string
   phone: string
   password: string
+  gender: Gender
 }): Promise<User> {
+  if (opts.gender !== 'male' && opts.gender !== 'female') {
+    throw new Error('ڕەگەز دیاری بکە (نێر یان مێ).')
+  }
   const email = opts.email.trim().toLowerCase()
-  const { user } = await createUserWithEmailAndPassword(auth, email, opts.password)
+  setRegistrationInflight(true)
   try {
-    await updateProfile(user, { displayName: opts.fullName.trim() })
+    const { user } = await createUserWithEmailAndPassword(auth, email, opts.password)
+    // updateProfile لە پاشبنەما — پرۆفایلی یاری سەرەکییە
+    void updateProfile(user, { displayName: opts.fullName.trim() }).catch(() => {})
     await createRegisteredUserProfile(user.uid, {
       fullName: opts.fullName,
       username: opts.username,
       email,
       phone: opts.phone,
+      gender: opts.gender,
     })
-  } catch (err) {
-    throw err
+    rememberAuthSession(user.uid, email, email)
+    return user
+  } finally {
+    setRegistrationInflight(false)
   }
-  await setPersistence(auth, browserLocalPersistence)
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(AUTH_REMEMBER_KEY, '1')
-    localStorage.setItem(AUTH_EMAIL_HINT_KEY, email)
-  }
-  return user
 }
 
 export async function sendResetEmail(email: string): Promise<void> {

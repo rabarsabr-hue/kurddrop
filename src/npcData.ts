@@ -24,6 +24,7 @@ import {
   HUNTER_RANK_COUNT,
   DROP_LEVEL_COSTS,
   computeHunterLevel,
+  dropsOpenedForLevel,
   hunterLevelProgress,
   incrementDropsOpened,
   type DropsOpenedByType,
@@ -784,12 +785,13 @@ export function createInitialNpcStates(count = NPC_COUNT): LiveNpcState[] {
     const person = uniqueNpcName(i)
     const interactive = hashUnit(`interactive:${i}`) < NPC_INTERACTIVE_RATIO
     const walker = false
-    const hunterLevel = 0
-    const dropsOpenedByType = { ...EMPTY_DROPS_OPENED }
+    const hunterLevel = Math.min(HUNTER_RANK_COUNT - 1, Math.floor(hashUnit(`hlvl:${i}`) * 9))
+    const dropsOpenedByType = dropsOpenedForLevel(hunterLevel)
     const stats = { ...DEFAULT_PLAYER_STATS }
-    const gold = WELCOME_BONUS_GOLD
-    const diamond = WELCOME_BONUS_DIAMOND
-    const playerLevel = 1
+    const wallet = seedNpcWallet(i, hunterLevel, totalDropsOpened(dropsOpenedByType))
+    const gold = Math.max(WELCOME_BONUS_GOLD, wallet.gold)
+    const diamond = Math.max(WELCOME_BONUS_DIAMOND, wallet.diamond)
+    const playerLevel = Math.max(1, 1 + Math.floor(hunterLevel * 1.5 + hashUnit(`plvl:${i}`) * 4))
     const isOnline = hashUnit(`online0:${i}`) < NPC_INITIAL_ONLINE_RATIO
     const sessionSeed = `init-sess:${i}:${boot}`
     states.push({

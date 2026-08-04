@@ -1,26 +1,24 @@
-/** پەستاندنی خێرای وێنە/ڤیدیۆ بۆ نامەی تایبەت — کەم هەوڵ، بارکردنی خێرا */
+/**
+ * پەستاندنی وێنە/ڤیدیۆ بۆ نامەی تایبەت
+ * ئامانج: کوالێتی نزیک لە واتساپ + ناردنی خێرا (یەک encodeی باش، بێ پەستانی زۆر).
+ */
 
-const DM_IMAGE_MAX_BYTES = 72 * 1024 // ~72KB — خێرا + قەبارەی گونجاو
-const DM_IMAGE_HARD_MAX_BYTES = 160 * 1024
-const DM_IMAGE_MAX_SIDE = 560
-const DM_VIDEO_MAX_BYTES = 5 * 1024 * 1024 // 5MB
+/** ئامانجی قەبارە — ~١MB وەک فۆتۆی چات */
+const DM_IMAGE_MAX_BYTES = 1024 * 1024
+/** سنووری سەخت — ئەگەر پێویست بوو کەمێک گەورەتر */
+const DM_IMAGE_HARD_MAX_BYTES = 1536 * 1024
+/** درێژترین لایەن — ڕوون و گونجاو بۆ مۆبایل */
+const DM_IMAGE_MAX_SIDE = 1600
+/** کوالێتی سەرەکی JPEG */
+const DM_IMAGE_QUALITY = 0.84
+const DM_VIDEO_MAX_BYTES = 5 * 1024 * 1024
 
-export { DM_IMAGE_MAX_BYTES, DM_VIDEO_MAX_BYTES, DM_IMAGE_HARD_MAX_BYTES }
+export { DM_IMAGE_MAX_BYTES, DM_VIDEO_MAX_BYTES, DM_IMAGE_HARD_MAX_BYTES, DM_IMAGE_MAX_SIDE }
 
 function isLikelyImageFile(file: File): boolean {
   if (file.type.startsWith('image/')) return true
   const name = (file.name || '').toLowerCase()
   return /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(name)
-}
-
-function yieldToUi(): Promise<void> {
-  return new Promise(resolve => {
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => resolve())
-    } else {
-      setTimeout(resolve, 0)
-    }
-  })
 }
 
 function fitMaxSide(width: number, height: number, maxSide: number): { w: number; h: number } {
@@ -44,7 +42,6 @@ function jpegSizeFromHeader(buf: ArrayBuffer): { w: number; h: number } | null {
     if (marker === 0xd9 || marker === 0xda) break
     const len = (u8[i + 2] << 8) | u8[i + 3]
     if (len < 2) break
-    // SOF0–SOF3, SOF5–SOF7, SOF9–SOF11, SOF13–SOF15
     const isSof =
       (marker >= 0xc0 && marker <= 0xc3) ||
       (marker >= 0xc5 && marker <= 0xc7) ||
@@ -71,159 +68,14 @@ async function probeImageSize(file: File): Promise<{ w: number; h: number } | nu
   return null
 }
 
-/**
- * پەستاندنی خێرا — زۆرینە ١–٢ encode، resize لە کاتی decode.
- * onProgress: 0–100
- */
-export async function compressImageToMaxBytes(
-  file: File,
-  maxBytes = DM_IMAGE_MAX_BYTES,
-  onProgress?: (pct: number) => void,
-): Promise<Blob> {
-  if (!isLikelyImageFile(file) && file.type && !file.type.startsWith('image/')) {
-    throw new Error('تکایە تەنها فایلی وێنە هەڵبژێرە')
-  }
-
-  onProgress?.(6)
-  await yieldToUi()
-
-  const type = (file.type || '').toLowerCase()
-  if ((type === 'image/jpeg' || type === 'image/jpg' || type === 'image/webp') && file.size <= maxBytes) {
-    onProgress?.(100)
-    return file
-  }
-
-  onProgress?.(12)
-  const probed = await probeImageSize(file)
-  onProgress?.(18)
-  await yieldToUi()
-
-  let bitmap: ImageBitmap | null = null
-  let width = 0
-  let height = 0
-
-  try {
-    if (typeof createImageBitmap === 'function') {
-      if (probed) {
-        const fit = fitMaxSide(probed.w, probed.h, DM_IMAGE_MAX_SIDE)
-        width = fit.w
-        height = fit.h
-        try {
-          bitmap = await createImageBitmap(file, {
-            resizeWidth: width,
-            resizeHeight: height,
-            resizeQuality: 'low',
-          })
-          width = bitmap.width
-          height = bitmap.height
-        } catch {
-          bitmap = await createImageBitmap(file)
-          const fit2 = fitMaxSide(bitmap.width, bitmap.height, DM_IMAGE_MAX_SIDE)
-          if (fit2.w !== bitmap.width || fit2.h !== bitmap.height) {
-            const resized = await createImageBitmap(bitmap, {
-              resizeWidth: fit2.w,
-              resizeHeight: fit2.h,
-              resizeQuality: 'low',
-            })
-            try { bitmap.close() } catch { /* ignore */ }
-            bitmap = resized
-          }
-          width = bitmap.width
-          height = bitmap.height
-        }
-      } else {
-        bitmap = await createImageBitmap(file)
-        const fit = fitMaxSide(bitmap.width, bitmap.height, DM_IMAGE_MAX_SIDE)
-        if (fit.w !== bitmap.width || fit.h !== bitmap.height) {
-          try {
-            const resized = await createImageBitmap(bitmap, {
-              resizeWidth: fit.w,
-              resizeHeight: fit.h,
-              resizeQuality: 'low',
-            })
-            try { bitmap.close() } catch { /* ignore */ }
-            bitmap = resized
-          } catch {
-            width = fit.w
-            height = fit.h
-          }
-        }
-        width = bitmap.width
-        height = bitmap.height
-      }
-    }
-  } catch {
-    bitmap = null
-  }
-
-  onProgress?.(40)
-  await yieldToUi()
-
-  const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true })
-  if (!ctx) {
-    try { bitmap?.close() } catch { /* ignore */ }
-    throw new Error('canvas')
-  }
-
-  let drawable: CanvasImageSource
-  let closeExtra: (() => void) | undefined
-
-  if (bitmap) {
-    drawable = bitmap
-    closeExtra = () => { try { bitmap?.close() } catch { /* ignore */ } }
-  } else {
-    const source = await loadImageSource(file)
-    const fit = fitMaxSide(source.width, source.height, DM_IMAGE_MAX_SIDE)
-    width = fit.w
-    height = fit.h
-    drawable = source.drawable
-    closeExtra = source.close
-  }
-
-  let quality = 0.5
-  let blob: Blob | null = null
-  let best: Blob | null = null
-
-  try {
-    // زۆرینە ٢ هەوڵ — خێرا
-    for (let attempt = 0; attempt < 2; attempt++) {
-      canvas.width = width
-      canvas.height = height
-      ctx.fillStyle = '#0b1220'
-      ctx.fillRect(0, 0, width, height)
-      ctx.drawImage(drawable, 0, 0, width, height)
-      blob = await canvasToJpegBlob(canvas, quality)
-      onProgress?.(55 + attempt * 20)
-      await yieldToUi()
-      if (!best || blob.size < best.size) best = blob
-      if (blob.size <= maxBytes) {
-        onProgress?.(100)
-        return blob
-      }
-      // دووەم هەوڵ: بچووکتر + کوالێتی کەمتر
-      width = Math.max(200, Math.round(width * 0.72))
-      height = Math.max(200, Math.round(height * 0.72))
-      quality = 0.38
-    }
-  } finally {
-    closeExtra?.()
-  }
-
-  const out = (best && best.size <= DM_IMAGE_HARD_MAX_BYTES ? best : blob) || best
-  if (!out || out.size === 0) throw new Error('وێنەکە نەتوانرا بچووک بکرێتەوە')
-  onProgress?.(100)
-  return out
-}
-
-/** ڤیدیۆ — سنووری قەبارە */
-export async function prepareDmVideoFile(file: File, maxBytes = DM_VIDEO_MAX_BYTES): Promise<File> {
-  const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(file.name || '')
-  if (!isVideo) throw new Error('تکایە فایلی ڤیدیۆ هەڵبژێرە')
-  if (file.size > maxBytes) {
-    throw new Error(`ڤیدیۆکە زۆر گەورەیە — زۆرترین ${Math.round(maxBytes / (1024 * 1024))} مێگابایت`)
-  }
-  return file
+function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      b => { if (b && b.size > 0) resolve(b); else reject(new Error('blob')) },
+      'image/jpeg',
+      quality,
+    )
+  })
 }
 
 type ImageSource = {
@@ -248,7 +100,11 @@ async function loadImageSource(file: File): Promise<ImageSource> {
 
   const dataUrl = await readFileAsDataUrl(file)
   const img = await loadImage(dataUrl)
-  return { width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, drawable: img }
+  return {
+    width: img.naturalWidth || img.width,
+    height: img.naturalHeight || img.height,
+    drawable: img,
+  }
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -269,14 +125,169 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
-function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      b => { if (b && b.size > 0) resolve(b); else reject(new Error('blob')) },
-      'image/jpeg',
-      quality,
-    )
-  })
+async function decodeAndResize(
+  file: File,
+  maxSide: number,
+): Promise<{ drawable: CanvasImageSource; width: number; height: number; close: () => void }> {
+  const probed = await probeImageSize(file)
+
+  if (typeof createImageBitmap === 'function') {
+    try {
+      if (probed) {
+        const fit = fitMaxSide(probed.w, probed.h, maxSide)
+        // resize لە کاتی decode — خێراتر + کوالێتی بەرز
+        const bitmap = await createImageBitmap(file, {
+          resizeWidth: fit.w,
+          resizeHeight: fit.h,
+          resizeQuality: 'high',
+        })
+        return {
+          drawable: bitmap,
+          width: bitmap.width,
+          height: bitmap.height,
+          close: () => { try { bitmap.close() } catch { /* ignore */ } },
+        }
+      }
+
+      const full = await createImageBitmap(file)
+      const fit = fitMaxSide(full.width, full.height, maxSide)
+      if (fit.w === full.width && fit.h === full.height) {
+        return {
+          drawable: full,
+          width: full.width,
+          height: full.height,
+          close: () => { try { full.close() } catch { /* ignore */ } },
+        }
+      }
+      try {
+        const resized = await createImageBitmap(full, {
+          resizeWidth: fit.w,
+          resizeHeight: fit.h,
+          resizeQuality: 'high',
+        })
+        try { full.close() } catch { /* ignore */ }
+        return {
+          drawable: resized,
+          width: resized.width,
+          height: resized.height,
+          close: () => { try { resized.close() } catch { /* ignore */ } },
+        }
+      } catch {
+        return {
+          drawable: full,
+          width: fit.w,
+          height: fit.h,
+          close: () => { try { full.close() } catch { /* ignore */ } },
+        }
+      }
+    } catch { /* fallback below */ }
+  }
+
+  const source = await loadImageSource(file)
+  const fit = fitMaxSide(source.width, source.height, maxSide)
+  return {
+    drawable: source.drawable,
+    width: fit.w,
+    height: fit.h,
+    close: () => { source.close?.() },
+  }
+}
+
+/**
+ * پەستاندنی وێنە بۆ DM — کوالێتی بەرز، زۆرینە یەک encode.
+ * onProgress: 0–100
+ */
+export async function compressImageToMaxBytes(
+  file: File,
+  maxBytes = DM_IMAGE_MAX_BYTES,
+  onProgress?: (pct: number) => void,
+): Promise<Blob> {
+  if (!isLikelyImageFile(file) && file.type && !file.type.startsWith('image/')) {
+    throw new Error('تکایە تەنها فایلی وێنە هەڵبژێرە')
+  }
+
+  onProgress?.(8)
+  const type = (file.type || '').toLowerCase()
+
+  // GIF بچووک — وەک خۆی (ئەنیمەیشن بمێنێتەوە)
+  if ((type === 'image/gif' || /\.gif$/i.test(file.name || '')) && file.size <= maxBytes) {
+    onProgress?.(100)
+    return file
+  }
+
+  // JPEG/WebP ئامادە — ئەگەر قەبارە و لایەن گونجاو بن، بێ encodeی دووبارە
+  if (type === 'image/jpeg' || type === 'image/jpg' || type === 'image/webp') {
+    if (file.size <= maxBytes) {
+      const probed = await probeImageSize(file)
+      if (!probed || Math.max(probed.w, probed.h) <= DM_IMAGE_MAX_SIDE) {
+        onProgress?.(100)
+        return file
+      }
+    }
+  }
+
+  onProgress?.(20)
+  const decoded = await decodeAndResize(file, DM_IMAGE_MAX_SIDE)
+  onProgress?.(45)
+
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d', { alpha: false })
+  if (!ctx) {
+    decoded.close()
+    throw new Error('canvas')
+  }
+
+  let best: Blob | null = null
+
+  try {
+    const attempts: Array<{ q: number; scale: number }> = [
+      { q: DM_IMAGE_QUALITY, scale: 1 },
+      { q: 0.78, scale: 1 },
+      { q: 0.72, scale: 0.82 },
+    ]
+
+    for (let i = 0; i < attempts.length; i++) {
+      const { q, scale } = attempts[i]!
+      const width = Math.max(1, Math.round(decoded.width * scale))
+      const height = Math.max(1, Math.round(decoded.height * scale))
+
+      canvas.width = width
+      canvas.height = height
+      ctx.fillStyle = '#0b1220'
+      ctx.fillRect(0, 0, width, height)
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(decoded.drawable, 0, 0, width, height)
+
+      const blob = await canvasToJpegBlob(canvas, q)
+      onProgress?.(55 + Math.round(((i + 1) / attempts.length) * 40))
+      if (!best || blob.size < best.size) best = blob
+      if (blob.size <= maxBytes) {
+        onProgress?.(100)
+        return blob
+      }
+    }
+  } finally {
+    decoded.close()
+  }
+
+  const out = best
+  if (!out || out.size === 0) throw new Error('وێنەکە نەتوانرا ئامادە بکرێت')
+  if (out.size > DM_IMAGE_HARD_MAX_BYTES) {
+    throw new Error('وێنەکە زۆر گەورەیە — وێنەیەکی تر هەڵبژێرە')
+  }
+  onProgress?.(100)
+  return out
+}
+
+/** ڤیدیۆ — سنووری قەبارە */
+export async function prepareDmVideoFile(file: File, maxBytes = DM_VIDEO_MAX_BYTES): Promise<File> {
+  const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(file.name || '')
+  if (!isVideo) throw new Error('تکایە فایلی ڤیدیۆ هەڵبژێرە')
+  if (file.size > maxBytes) {
+    throw new Error(`ڤیدیۆکە زۆر گەورەیە — زۆرترین ${Math.round(maxBytes / (1024 * 1024))} مێگابایت`)
+  }
+  return file
 }
 
 export { isLikelyImageFile }

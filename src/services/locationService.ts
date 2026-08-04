@@ -155,16 +155,21 @@ export async function updatePlayerMapFx(
   await setDoc(doc(db, 'locations', uid), payload, { merge: true })
 }
 
-/** کۆتایی سێشن — شوێنی دوایین دەمێنێتەوە، تەنها isOnline=false دەبێت */
-export async function setPlayerOffline(uid: string) {
-  await setDoc(
-    doc(db, 'locations', uid),
-    {
-      isOnline: false,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  )
+/**
+ * کۆتایی سێشن / ئۆفلاین:
+ * - شوێنی دوایین دەمێنێتەوە + isOnline=false (بۆ «پێش X لەسەر هێڵ بوو»)
+ * - ئەگەر hideFromMap=true («وونم بکە کاتێک لەسەر هێڵ نیم»)، ئەڤاتار لە نەخشە دەشاردرێتەوە
+ * - ئەگەر hideFromMap=false، ئەڤاتار دەمێنێتەوە لەسەر نەخشە
+ */
+export async function setPlayerOffline(uid: string, opts?: { hideFromMap?: boolean }) {
+  const payload: Record<string, unknown> = {
+    isOnline: false,
+    updatedAt: serverTimestamp(),
+  }
+  if (opts?.hideFromMap) {
+    payload.showMyAvatarOnMap = false
+  }
+  await setDoc(doc(db, 'locations', uid), payload, { merge: true })
 }
 
 /** @deprecated شوێن هەرگیز ناسڕدرێتەوە — setPlayerOffline بەکاربهێنە */
@@ -448,7 +453,7 @@ export async function resetMapPresenceAndSeedBots(preserveUid: string): Promise<
       eyeColor: bot.eyeColor,
       outfitColor: bot.outfitColor,
     })
-    const hunterLevel = 0
+    const hunterLevel = Math.max(0, Math.floor(Number(bot.hunterLevel) || 0))
     const rank = hunterRankForLevel(hunterLevel)
     const dropsOpenedByType = dropsOpenedForLevel(hunterLevel)
     const playerId = `9${bot.id.padStart(7, '0')}`

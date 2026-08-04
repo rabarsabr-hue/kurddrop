@@ -129,13 +129,12 @@ import {
 import {
   HUNTER_RANKS,
   hunterRankForLevel,
+  resolveHunterLevel,
 } from './hunterLevel'
 import { XP_REWARDS, xpForDropType } from './playerXp'
 import { formatActivityAt, loadActivityArchive } from './activityArchive'
 import { formatNotifTime } from './services/notificationService'
 import { isBotPlayerUid } from './services/locationService'
-import { isProtectedAccount } from './data/protectedPlayers'
-
 import maleAvatar from './imports/male.png'
 
 import femaleAvatar from './imports/female.png'
@@ -245,6 +244,7 @@ import {
   mapChatBubbleSig,
   buildMapChatBubbleHtml,
   formatPlayTime,
+  formatAccountCreatedAt,
   formatDurationKu,
   avatarForGender,
   resolveLeaderboardHeadAvatar,
@@ -482,7 +482,18 @@ export default function AppView(s: Record<string, any>) {
     dmMediaRecorderRef,
     dmMessages,
     dmRecording,
+    dmVoiceLocked,
+    dmVoiceCancelArmed,
+    dmVoiceSeconds,
+    dmVoiceHint,
     dmVoiceLevels,
+    handleDmVoicePointerDown,
+    handleDmVoicePointerMove,
+    handleDmVoicePointerUp,
+    handleDmVoicePointerCancel,
+    handleDmVoiceLock,
+    handleDmVoiceTrash,
+    handleDmVoiceSendLocked,
     dmSelectedIds,
     dmSendingMedia,
     dmMediaProgress,
@@ -702,6 +713,7 @@ export default function AppView(s: Record<string, any>) {
     playerLevelNum,
     playerMarkersGroupRef,
     playerName,
+    playerFullName,
     playerPanelDragRef,
     playerPanelRef,
     playerSheetAnimIn,
@@ -2128,7 +2140,7 @@ export default function AppView(s: Record<string, any>) {
 
         {/* هێدەری سەرەوە و بۆکسەکان */}
 
-        <div ref={setHeaderNode} className="glass-surface kd-app-header" style={{ position: 'absolute', top: 'calc(2px + env(safe-area-inset-top, 0px))', left: 'calc(8px + env(safe-area-inset-left, 0px))', right: 'calc(8px + env(safe-area-inset-right, 0px))', zIndex: 100100, borderRadius: 22, padding: '7px 9px 6px', display: 'flex', flexDirection: 'column', gap: 8, transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)' }}>
+        <div ref={setHeaderNode} className="glass-surface kd-app-header" style={{ position: 'absolute', top: 'calc(2px + env(safe-area-inset-top, 0px))', left: 'calc(8px + env(safe-area-inset-left, 0px))', right: 'calc(8px + env(safe-area-inset-right, 0px))', zIndex: 100100, borderRadius: 22, padding: '7px 9px 6px', display: 'flex', flexDirection: 'column', gap: 8, transition: 'all 0.16s cubic-bezier(0.22, 1, 0.36, 1)' }}>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
 
@@ -2432,7 +2444,7 @@ export default function AppView(s: Record<string, any>) {
 
           {isDropdownSheetOpen && (
 
-            <div id="dropdown-wrapper" style={{ display: 'flex', flexDirection: 'column', borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: 12, marginTop: 4, maxHeight: '62vh', overflow: 'hidden', animation: 'smoothExpand 0.52s cubic-bezier(0.22, 1, 0.36, 1)' }}>
+            <div id="dropdown-wrapper" style={{ display: 'flex', flexDirection: 'column', borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: 12, marginTop: 4, maxHeight: '62vh', overflow: 'hidden', animation: 'smoothExpand 0.22s cubic-bezier(0.22, 1, 0.36, 1)' }}>
 
               <div style={{ overflowY: 'auto', flexGrow: 1, paddingBottom: 15, scrollbarWidth: 'none' }}>
 
@@ -2473,6 +2485,7 @@ export default function AppView(s: Record<string, any>) {
                           lng={p.lng}
                           distM={p.distM}
                           isOnline={p.isOnline}
+                          lastSeenMs={p.lastSeenMs}
                           avatarUrl={p.avatarUrl}
                           avatar3d={p.avatar3d}
                           gender={p.gender}
@@ -3241,7 +3254,7 @@ export default function AppView(s: Record<string, any>) {
                           </button>
 
                           {[
-                            { label: 'ناوی تەواو', value: playerName || '—', editable: false },
+                            { label: 'ناوی تەواو', value: (playerFullName || userProfile?.name || '').trim() || '—', editable: false },
                             {
                               label: 'یوزەرنەیمی یاری',
                               value: userProfile?.username ? `@${userProfile.username}` : '—',
@@ -3255,7 +3268,11 @@ export default function AppView(s: Record<string, any>) {
                               editable: false,
                               copy: Boolean(playerIdDisplay),
                             },
-                            { label: 'ئاست (لێڤڵ)', value: String(playerLevelNum), editable: false },
+                            {
+                              label: 'ڕەگەز',
+                              value: userProfile?.gender === 'female' ? 'مێ' : 'نێر',
+                              editable: false,
+                            },
                             {
                               label: 'ئیمەیڵ',
                               value: userProfile?.email || '—',
@@ -3269,6 +3286,11 @@ export default function AppView(s: Record<string, any>) {
                               editable: !userProfile?.phoneEditUsed,
                               onEdit: handleEditPhoneOnce,
                               used: userProfile?.phoneEditUsed === true,
+                            },
+                            {
+                              label: 'بەرواری دروستکردنی هەژمار',
+                              value: formatAccountCreatedAt(userProfile?.createdAtMs),
+                              editable: false,
                             },
                           ].map(row => (
                             <div
@@ -3380,7 +3402,7 @@ export default function AppView(s: Record<string, any>) {
                         { icon: 'shopping_bag', label: 'کەرەستە کڕدراو', value: String(playerStats.itemsPurchased), color: '#e9d5ff' },
                         { icon: 'redeem', label: 'ڕۆژی خەڵات', value: String(playerStats.dailyBonusClaims), color: '#fbbf24' },
                         { icon: 'card_giftcard', label: 'دیاری وەرگیراو', value: String(playerStats.giftsReceived), color: '#fde68a' },
-                        { icon: 'inventory_2', label: 'سندوقی کراوە', value: String(playerStats.chestsOpened), color: '#c084fc' },
+                        { icon: 'send', label: 'دیاری ناردن', value: String(userProfile?.giftsSentScore ?? 0), color: '#c084fc' },
                         { icon: 'directions_walk', label: 'مەودای بڕدراو', value: playerStats.distanceTraveledM >= 1000 ? `${(playerStats.distanceTraveledM / 1000).toFixed(1)} کم` : `${playerStats.distanceTraveledM} م`, color: '#86efac' },
                       ].map(stat => (
                         <div key={stat.label} className="kd-profile-stat-box" style={{ background: `linear-gradient(160deg, ${stat.color}22 0%, rgba(8,12,22,0.4) 100%)` }}>
@@ -3473,14 +3495,14 @@ export default function AppView(s: Record<string, any>) {
 
                     <div className="kd-profile-settings">
 
-                      <SettingRow label="پیشاندانی ئەڤاتارەکەم لە هەموو هەژمارێک" checked={showMyAvatarOnMap} onChange={handleToggleShowMyAvatarOnMap} />
+                      <SettingRow label="پیشاندانی کەسایەتم لەسەر نەخشە" checked={showMyAvatarOnMap} onChange={handleToggleShowMyAvatarOnMap} />
                       <SettingRow label="وونم بکە کاتێک لەسەر هێڵ نیم" checked={hideWhenOffline} onChange={handleToggleHideWhenOffline} />
                       <SettingRow label="وونکردنی کەسایەتی تر" checked={!showOtherPlayers} onChange={(next) => handleToggleShowOtherPlayers(!next)} />
                       <SettingRow label="وونکردنی چاتی گشتی" checked={hideGlobalChat} onChange={handleToggleHideGlobalChat} />
                       <SettingRow
                         label="ڕێگەدانی نامە هاتن بێ هاوڕێیەتی"
-                        checked={!allowDmWithoutFriendship}
-                        onChange={(next) => handleToggleAllowDmWithoutFriendship(!next)}
+                        checked={allowDmWithoutFriendship}
+                        onChange={handleToggleAllowDmWithoutFriendship}
                       />
                       <SettingRow label="داخرانی وەرگرتنی دیاری" checked={blockIncomingGifts} onChange={handleToggleBlockIncomingGifts} />
 
@@ -4604,13 +4626,17 @@ export default function AppView(s: Record<string, any>) {
 
                                 {m.kind === 'image' && m.mediaUrl ? (
 
-                                  <div style={{ position: 'relative', width: 140, height: 140 }}>
+                                  <div style={{ position: 'relative', width: 'min(220px, 72vw)', maxWidth: 220 }}>
 
                                     <img
 
                                       src={m.mediaUrl}
 
                                       alt="وێنە"
+
+                                      loading="eager"
+
+                                      decoding="async"
 
                                       onClick={e => {
                                         e.stopPropagation()
@@ -4626,19 +4652,19 @@ export default function AppView(s: Record<string, any>) {
                                         el.alt = 'وێنە بارنەبوو'
                                       }}
 
-                                      style={{ width: 140, height: 140, objectFit: 'cover', borderRadius: 8, cursor: 'pointer', display: 'block', background: 'rgba(0,0,0,0.25)' }}
+                                      style={{ width: '100%', maxHeight: 280, objectFit: 'contain', borderRadius: 10, cursor: 'pointer', display: 'block', background: 'rgba(0,0,0,0.35)' }}
 
                                     />
 
                                     {typeof dmMediaProgress[m.id] === 'number' && dmMediaProgress[m.id] < 100 && (
 
-                                      <div style={{ position: 'absolute', inset: 0, borderRadius: 8, background: 'rgba(2,6,18,0.62)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, pointerEvents: 'none' }}>
+                                      <div style={{ position: 'absolute', inset: 0, borderRadius: 10, background: 'rgba(2,6,18,0.55)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, pointerEvents: 'none' }}>
 
                                         <div style={{ fontSize: 14, fontWeight: 900, color: '#67e8f9', direction: 'ltr' }}>{Math.max(0, Math.min(99, dmMediaProgress[m.id]))}%</div>
 
                                         <div style={{ width: '72%', height: 5, borderRadius: 5, background: 'rgba(255,255,255,0.15)', overflow: 'hidden' }}>
 
-                                          <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, dmMediaProgress[m.id]))}%`, background: 'linear-gradient(90deg, #22d3ee, #67e8f9)', transition: 'width 120ms linear' }} />
+                                          <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, dmMediaProgress[m.id]))}%`, background: 'linear-gradient(90deg, #22d3ee, #67e8f9)', transition: 'width 100ms linear' }} />
 
                                         </div>
 
@@ -4670,7 +4696,14 @@ export default function AppView(s: Record<string, any>) {
 
                                 ) : m.kind === 'audio' && m.mediaUrl ? (
 
-                                  <audio controls src={m.mediaUrl} onClick={e => e.stopPropagation()} style={{ width: 180, height: 32, outline: 'none' }} />
+                                  <audio
+                                    controls
+                                    preload="metadata"
+                                    playsInline
+                                    src={m.mediaUrl}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ width: 196, height: 36, outline: 'none', borderRadius: 8 }}
+                                  />
 
                                 ) : (
 
@@ -4712,82 +4745,149 @@ export default function AppView(s: Record<string, any>) {
 
                         )}
 
-                        <div style={{ display: 'flex', gap: 4, marginTop: 2, alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: 4, marginTop: 2, alignItems: 'center', position: 'relative' }}>
 
-                          <div onClick={() => setDmShowEmoji(v => !v)} className="btn-interactive" style={{ width: 32, height: 32, borderRadius: 8, background: dmShowEmoji ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
-
-                            <i className="material-icons" style={{ fontSize: 16, color: '#fde68a' }}>emoji_emotions</i>
-
+                          <div key="dm-tools" style={{ display: 'flex', gap: 4, flexShrink: 0, width: dmRecording ? 36 : 68, justifyContent: 'flex-start' }}>
+                            {!dmRecording ? (
+                              <>
+                                <div onClick={() => setDmShowEmoji(v => !v)} className="btn-interactive" style={{ width: 32, height: 32, borderRadius: 8, background: dmShowEmoji ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
+                                  <i className="material-icons" style={{ fontSize: 16, color: '#fde68a' }}>emoji_emotions</i>
+                                </div>
+                                <div onClick={() => { if (!dmSendingMedia) dmImageInputRef.current?.click() }} className="btn-interactive" style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0, opacity: dmSendingMedia ? 0.5 : 1 }}>
+                                  <i className="material-icons" style={{ fontSize: 16, color: '#67e8f9' }}>photo_library</i>
+                                </div>
+                              </>
+                            ) : dmVoiceLocked ? (
+                              <div
+                                onClick={e => { e.stopPropagation(); handleDmVoiceTrash() }}
+                                className="btn-interactive"
+                                title="سڕینەوە"
+                                style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(248,113,113,0.2)', border: '1px solid rgba(248,113,113,0.55)', display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}
+                              >
+                                <i className="material-icons" style={{ fontSize: 18, color: '#fca5a5' }}>delete</i>
+                              </div>
+                            ) : null}
                           </div>
 
-                          <div onClick={() => { if (!dmSendingMedia) dmImageInputRef.current?.click() }} className="btn-interactive" style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0, opacity: dmSendingMedia ? 0.5 : 1 }}>
-
-                            <i className="material-icons" style={{ fontSize: 16, color: '#67e8f9' }}>photo_library</i>
-
+                          <div key="dm-main" style={{ flex: 1, minWidth: 0 }}>
+                            {dmRecording ? (
+                              <div
+                                style={{
+                                  height: 36,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  padding: '0 8px',
+                                  background: dmVoiceCancelArmed
+                                    ? 'rgba(248,113,113,0.22)'
+                                    : 'rgba(239,68,68,0.12)',
+                                  border: `1px solid ${dmVoiceCancelArmed ? 'rgba(248,113,113,0.65)' : 'rgba(239,68,68,0.35)'}`,
+                                  borderRadius: 12,
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                <span style={{ fontSize: 10, fontWeight: 900, color: '#fecaca', direction: 'ltr', minWidth: 34, fontVariantNumeric: 'tabular-nums' }}>
+                                  {`${Math.floor(dmVoiceSeconds / 60)}:${String(dmVoiceSeconds % 60).padStart(2, '0')}`}
+                                </span>
+                                <div style={{ flex: 1, minWidth: 0, height: 28, display: 'flex', alignItems: 'center', gap: 2 }}>
+                                  {(dmVoiceLevels || []).map((lvl: number, i: number) => (
+                                    <span
+                                      key={i}
+                                      style={{
+                                        flex: 1,
+                                        minWidth: 2,
+                                        height: `${Math.round(8 + lvl * 18)}px`,
+                                        borderRadius: 2,
+                                        background: dmVoiceCancelArmed ? '#f87171' : (i % 3 === 0 ? '#f87171' : '#fb7185'),
+                                        opacity: 0.75 + lvl * 0.25,
+                                        transition: 'height 50ms linear',
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                                <span style={{ fontSize: 8, fontWeight: 800, color: dmVoiceCancelArmed ? '#fecaca' : '#94a3b8', whiteSpace: 'nowrap' }}>
+                                  {dmVoiceCancelArmed
+                                    ? 'پەشیمانبوونەوە'
+                                    : dmVoiceHint === 'lock'
+                                      ? '↑ قفڵ'
+                                      : dmVoiceLocked
+                                        ? 'تۆمارکردن...'
+                                        : '← پەشیمان · ↑ قفڵ'}
+                                </span>
+                              </div>
+                            ) : (
+                              <input
+                                value={dmInput}
+                                onChange={e => setDmInput(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault()
+                                    handleSendDmMessage()
+                                  }
+                                }}
+                                placeholder="پەیامێک بنووسە..."
+                                disabled={dmSendingMedia}
+                                style={{ width: '100%', boxSizing: 'border-box', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '8px 10px', color: '#fff', fontSize: 10, fontFamily: 'var(--kd-font)', outline: 'none' }}
+                              />
+                            )}
                           </div>
 
-                          <div onClick={() => { void handleToggleDmVoice() }} className="btn-interactive" style={{ width: 32, height: 32, borderRadius: 8, background: dmRecording ? 'rgba(239,68,68,0.25)' : 'rgba(255,255,255,0.06)', border: `1px solid ${dmRecording ? 'rgba(239,68,68,0.55)' : 'rgba(255,255,255,0.12)'}`, display: 'flex', justifyContent: 'center', alignItems: 'center', flexShrink: 0 }}>
-
-                            <i className="material-icons" style={{ fontSize: 16, color: dmRecording ? '#fca5a5' : '#c4b5fd' }}>{dmRecording ? 'stop' : 'mic'}</i>
-
+                          <div key="dm-action" style={{ flexShrink: 0, minWidth: 40, display: 'flex', justifyContent: 'center' }}>
+                            {dmRecording && dmVoiceLocked ? (
+                              <div
+                                onClick={e => { e.stopPropagation(); handleDmVoiceSendLocked() }}
+                                className="btn-interactive"
+                                title="ناردن"
+                                style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(145deg, #25d366, #128c7e)', border: '1px solid rgba(37,211,102,0.7)', display: 'flex', justifyContent: 'center', alignItems: 'center', boxShadow: '0 2px 10px rgba(37,211,102,0.35)' }}
+                              >
+                                <i className="material-icons" style={{ fontSize: 20, color: '#fff' }}>send</i>
+                              </div>
+                            ) : !dmRecording && dmInput.trim() ? (
+                              <button
+                                type="button"
+                                onClick={e => { e.stopPropagation(); handleSendDmMessage() }}
+                                className="btn-interactive"
+                                style={{ background: 'linear-gradient(135deg, rgba(0,240,255,0.3), rgba(2,132,199,0.2))', border: '1px solid rgba(0,240,255,0.5)', borderRadius: 10, padding: '0 12px', height: 32, color: '#cffafe', fontWeight: 900, fontSize: 10, fontFamily: 'var(--kd-font)' }}
+                              >ناردن</button>
+                            ) : (
+                              <div
+                                onPointerDown={handleDmVoicePointerDown}
+                                onPointerMove={handleDmVoicePointerMove}
+                                onPointerUp={handleDmVoicePointerUp}
+                                onPointerCancel={handleDmVoicePointerCancel}
+                                onContextMenu={e => e.preventDefault()}
+                                className="btn-interactive kd-dm-mic-btn"
+                                title={dmRecording ? 'بەردەست بهێڵە بۆ تۆمار' : 'دایگرە بۆ تۆماری دەنگ'}
+                                style={{
+                                  width: dmRecording ? 44 : 36,
+                                  height: dmRecording ? 44 : 36,
+                                  borderRadius: '50%',
+                                  background: dmRecording
+                                    ? (dmVoiceCancelArmed ? 'rgba(248,113,113,0.45)' : 'linear-gradient(145deg, #ef4444, #b91c1c)')
+                                    : 'linear-gradient(145deg, #25d366, #128c7e)',
+                                  border: dmRecording
+                                    ? `2px solid ${dmVoiceCancelArmed ? '#fca5a5' : '#fecaca'}`
+                                    : '1px solid rgba(37,211,102,0.65)',
+                                  display: 'flex',
+                                  justifyContent: 'center',
+                                  alignItems: 'center',
+                                  touchAction: 'none',
+                                  userSelect: 'none',
+                                  WebkitUserSelect: 'none',
+                                  boxShadow: dmRecording
+                                    ? '0 0 0 6px rgba(239,68,68,0.18)'
+                                    : '0 2px 8px rgba(37,211,102,0.3)',
+                                  transform: dmRecording ? 'scale(1.06)' : undefined,
+                                  transition: 'transform 80ms ease, background 80ms ease',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <i className="material-icons" style={{ fontSize: dmRecording ? 22 : 18, color: '#fff', pointerEvents: 'none' }}>
+                                  {dmVoiceCancelArmed ? 'delete' : 'mic'}
+                                </i>
+                              </div>
+                            )}
                           </div>
-
-                          {dmRecording ? (
-                            <div style={{ flex: 1, minWidth: 0, height: 32, display: 'flex', alignItems: 'center', gap: 2, padding: '0 8px', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 10, overflow: 'hidden' }}>
-                              {(dmVoiceLevels || []).map((lvl, i) => (
-                                <span
-                                  key={i}
-                                  style={{
-                                    flex: 1,
-                                    minWidth: 2,
-                                    height: `${Math.round(8 + lvl * 18)}px`,
-                                    borderRadius: 2,
-                                    background: i % 3 === 0 ? '#f87171' : '#fb7185',
-                                    opacity: 0.75 + lvl * 0.25,
-                                    transition: 'height 60ms linear',
-                                  }}
-                                />
-                              ))}
-                            </div>
-                          ) : (
-                          <input
-
-                            value={dmInput}
-
-                            onChange={e => setDmInput(e.target.value)}
-
-                            onKeyDown={e => {
-
-                              if (e.key === 'Enter' && !e.shiftKey) {
-
-                                e.preventDefault()
-
-                                handleSendDmMessage()
-
-                              }
-
-                            }}
-
-                            placeholder="پەیامێک بنووسە..."
-
-                            disabled={dmSendingMedia}
-
-                            style={{ flex: 1, background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10, padding: '8px 10px', color: '#fff', fontSize: 10, fontFamily: 'var(--kd-font)', outline: 'none', minWidth: 0 }}
-
-                          />
-                          )}
-
-                          <button
-
-                            type="button"
-
-                            onClick={e => { e.stopPropagation(); handleSendDmMessage() }}
-
-                            className="btn-interactive"
-
-                            style={{ background: 'linear-gradient(135deg, rgba(0,240,255,0.3), rgba(2,132,199,0.2))', border: '1px solid rgba(0,240,255,0.5)', borderRadius: 10, padding: '0 12px', height: 32, color: '#cffafe', fontWeight: 900, fontSize: 10, fontFamily: 'var(--kd-font)', flexShrink: 0 }}
-
-                          >ناردن</button>
 
                         </div>
 
@@ -5964,7 +6064,7 @@ export default function AppView(s: Record<string, any>) {
 
                     } else {
 
-                      el.style.transition = 'opacity 0.25s ease';
+                      el.style.transition = 'opacity 0.15s ease';
 
                       el.style.opacity = '1';
 
@@ -6188,11 +6288,11 @@ export default function AppView(s: Record<string, any>) {
 
                 <div className="kd-map-chat-modal-title">
 
-                  <span className={`kd-map-fab glass-surface is-on`} style={{ width: 32, height: 32, borderRadius: '50%' }}>
+                  <span className={`kd-map-fab glass-surface is-on`} style={{ width: 28, height: 28, borderRadius: '50%' }}>
                     <MapFabIcon name="chat" />
                   </span>
 
-                  <span>چاتی گشتی نەخشە</span>
+                  <span>چاتی گشتی</span>
 
                 </div>
 
@@ -6202,8 +6302,9 @@ export default function AppView(s: Record<string, any>) {
                   disabled={mapChatSending}
                   onClick={() => closeMapChatAnimated()}
                   aria-label="داخستن"
+                  style={{ width: 30, height: 30 }}
                 >
-                  <i className="material-icons" style={{ fontSize: 18 }}>close</i>
+                  <i className="material-icons" style={{ fontSize: 16 }}>close</i>
                 </button>
 
               </div>
@@ -6238,7 +6339,7 @@ export default function AppView(s: Record<string, any>) {
                         title={m.name}
                       >
                         <HeadShotAvatar
-                          sizePx={34}
+                          sizePx={28}
                           gender={m.gender}
                           seed={m.uid}
                           avatarUrl={m.avatarUrl || avatarForGender(m.gender)}
@@ -6415,18 +6516,16 @@ export default function AppView(s: Record<string, any>) {
 
           const sheetUid = selectedPlayer.uid || 'unknown'
 
-          const sheetHunter = Math.max(0, Math.floor(Number(selectedPlayer.hunterLevel) || 0))
+          const sheetHunter = resolveHunterLevel(
+            selectedPlayer.hunterLevel,
+            selectedPlayer.dropsOpenedByType,
+          )
 
           const sheetOnline = selectedPlayer.isOnline === true
 
           const title = selectedPlayer.titleId != null ? COSMETIC_BY_ID[selectedPlayer.titleId] ?? null : null
 
           const isBotPlayer = selectedPlayer.isBot === true || isBotPlayerUid(sheetUid)
-
-          const sheetProtected = isProtectedAccount({
-            uid: sheetUid,
-            playerId: onlinePlayersRef.current.get(sheetUid)?.playerId || '',
-          })
 
           const rank = hunterRankForLevel(sheetHunter)
 
@@ -6450,27 +6549,25 @@ export default function AppView(s: Record<string, any>) {
 
               ? { key: 'friend' as const, label: 'داواکاری نێردرا', icon: 'hourglass_top', color: '#fbbf24', disabled: true, action: () => {} }
 
-              : { key: 'friend' as const, label: 'ببە هاوڕێم', icon: 'person_add', color: '#4ade80', disabled: isBotPlayer || sheetProtected, action: () => handleSendFriendRequestToPlayer(sheetUid, sheetName) }
+              : { key: 'friend' as const, label: 'ببە هاوڕێم', icon: 'person_add', color: '#4ade80', disabled: isBotPlayer, action: () => handleSendFriendRequestToPlayer(sheetUid, sheetName) }
 
           const actionBtns = ([
 
             friendBtn,
 
-            { key: 'message', label: 'نامە', icon: 'chat_bubble', color: '#00f0ff', disabled: isBotPlayer || sheetProtected || blockedUidsRef.current.has(sheetUid), action: () => handleSendMessageToPlayer(sheetUid, sheetName) },
+            { key: 'message', label: 'نامە', icon: 'chat_bubble', color: '#00f0ff', disabled: isBotPlayer || blockedUidsRef.current.has(sheetUid), action: () => handleSendMessageToPlayer(sheetUid, sheetName) },
 
-            { key: 'steal', label: 'دزین', icon: 'lock_open', color: '#e879f9', disabled: isBotPlayer || sheetProtected || selectedPlayer.isSelf || (stealCooldownUntilMs > Date.now()), action: () => handleStealMoneyFromPlayer(sheetUid, sheetName) },
+            { key: 'steal', label: 'دزین', icon: 'lock_open', color: '#e879f9', disabled: isBotPlayer || selectedPlayer.isSelf || (stealCooldownUntilMs > Date.now()), action: () => handleStealMoneyFromPlayer(sheetUid, sheetName) },
 
-            { key: 'donate', label: 'ببەخشە', icon: 'volunteer_activism', color: '#f472b6', disabled: isBotPlayer || sheetProtected || selectedPlayer.isSelf, action: () => { if (donatePickerUid === sheetUid || donatePickerClosing) { softCloseDonatePicker() } else { setDonatePickerClosing(false); setDonatePickerUid(sheetUid) } } },
+            { key: 'donate', label: 'ببەخشە', icon: 'volunteer_activism', color: '#f472b6', disabled: isBotPlayer || selectedPlayer.isSelf, action: () => { if (donatePickerUid === sheetUid || donatePickerClosing) { softCloseDonatePicker() } else { setDonatePickerClosing(false); setDonatePickerUid(sheetUid) } } },
 
-            { key: 'block', label: 'بلۆک', icon: 'block', color: '#f87171', disabled: isBotPlayer || sheetProtected, action: () => handleBlockPlayer(sheetUid, sheetName) },
+            { key: 'block', label: 'بلۆک', icon: 'block', color: '#f87171', disabled: isBotPlayer, action: () => handleBlockPlayer(sheetUid, sheetName) },
 
           ] as const)
 
           const playerActionDisabledMsg = (btn: typeof actionBtns[number]): string | null => {
 
             if (!btn.disabled) return null
-
-            if (sheetProtected) return '🔒 ئەم هەژمارە پارێزراوە — کارلێک بەردەست نییە'
 
             if (isBotPlayer) return 'ℹ️ ئەم یاریزانە تەنها بۆ نەخشەیە — کارلێک بەردەست نییە'
 
@@ -6593,6 +6690,12 @@ export default function AppView(s: Record<string, any>) {
 
             >
 
+              <div className="kd-player-focus-aurora" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+
               <div
 
                 className="kd-player-focus-drag"
@@ -6625,7 +6728,7 @@ export default function AppView(s: Record<string, any>) {
 
                   if (!playerPanelRef.current) return
 
-                  playerPanelRef.current.style.transition = `transform 0.52s ${IOS_SPRING_EASE}`
+                  playerPanelRef.current.style.transition = `transform 0.22s ${IOS_SPRING_EASE}`
 
                   if (dy > 56) {
 
@@ -6673,15 +6776,28 @@ export default function AppView(s: Record<string, any>) {
 
               <div className="kd-player-focus-inner">
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'right', marginBottom: 10 }}>
+                <div className="kd-player-focus-hero" style={{ display: 'flex', flexDirection: 'column', gap: 7, textAlign: 'right', marginBottom: 10 }}>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
 
-                    {selectedPlayer.isPremium && <i className="material-icons" style={{ fontSize: 16, color: '#ffd700' }}>workspace_premium</i>}
+                    {selectedPlayer.isPremium && <i className="material-icons" style={{ fontSize: 16, color: '#ffd700', filter: 'drop-shadow(0 0 6px rgba(255,215,0,0.65))' }}>workspace_premium</i>}
 
-                    <span style={{ fontSize: 16, fontWeight: 900, color: '#fff', lineHeight: 1.2, textShadow: '0 1px 4px rgba(0,0,0,0.7)' }}>{sheetName}</span>
+                    <span
+                      className="kd-player-focus-name"
+                      style={{
+                        fontSize: 17,
+                        fontWeight: 900,
+                        lineHeight: 1.2,
+                        background: 'linear-gradient(120deg, #ffffff 0%, #a5f3fc 40%, #fbcfe8 70%, #fde68a 100%)',
+                        WebkitBackgroundClip: 'text',
+                        backgroundClip: 'text',
+                        color: 'transparent',
+                        textShadow: 'none',
+                        filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.55))',
+                      }}
+                    >{sheetName}</span>
 
-                    {selectedPlayer.isSelf && <span style={{ fontSize: 8, fontWeight: 900, color: '#ffd700', background: 'rgba(255,215,0,0.16)', border: '1px solid rgba(255,215,0,0.5)', borderRadius: 6, padding: '1px 6px' }}>تۆ</span>}
+                    {selectedPlayer.isSelf && <span style={{ fontSize: 8, fontWeight: 900, color: '#fef08a', background: 'linear-gradient(135deg, rgba(255,215,0,0.28), rgba(251,191,36,0.12))', border: '1px solid rgba(255,215,0,0.55)', borderRadius: 999, padding: '2px 8px', boxShadow: '0 0 10px rgba(251,191,36,0.25)' }}>تۆ</span>}
 
                   </div>
 
@@ -6755,11 +6871,25 @@ export default function AppView(s: Record<string, any>) {
 
                   )}
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      width: 'fit-content',
+                      padding: '3px 9px',
+                      borderRadius: 999,
+                      background: sheetOnline
+                        ? 'linear-gradient(135deg, rgba(74,222,128,0.22), rgba(6,78,59,0.25))'
+                        : 'linear-gradient(135deg, rgba(148,163,184,0.18), rgba(30,41,59,0.35))',
+                      border: sheetOnline ? '1px solid rgba(74,222,128,0.45)' : '1px solid rgba(148,163,184,0.3)',
+                      boxShadow: sheetOnline ? '0 0 12px rgba(74,222,128,0.2)' : 'none',
+                    }}
+                  >
 
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: sheetOnline ? '#4ade80' : '#94a3b8', boxShadow: sheetOnline ? '0 0 8px rgba(74,222,128,0.7)' : 'none', flexShrink: 0 }} />
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: sheetOnline ? '#4ade80' : '#94a3b8', boxShadow: sheetOnline ? '0 0 8px rgba(74,222,128,0.8)' : 'none', flexShrink: 0 }} />
 
-                    <span style={{ fontSize: 9, fontWeight: 900, color: sheetOnline ? '#86efac' : '#cbd5e1', textShadow: '0 1px 3px rgba(0,0,0,0.65)' }}>
+                    <span style={{ fontSize: 9, fontWeight: 900, color: sheetOnline ? '#bbf7d0' : '#cbd5e1' }}>
 
                       {sheetOnline ? 'دۆخی مانەوە: ئۆنلاین' : lastSeenText}
 

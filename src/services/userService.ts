@@ -15,6 +15,9 @@ import {
   increment,
   arrayUnion,
   arrayRemove,
+  query,
+  where,
+  limit,
 } from 'firebase/firestore'
 import { ref as storageRef, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage'
 import { initAnonymousAuth, db, storage } from '../firebase'
@@ -36,8 +39,8 @@ import {
 } from '../fullBody3dAvatar'
 import { isProtectedAccount, lockProtectedWallet } from '../data/protectedPlayers'
 import {
-  computeHunterLevel,
   parseDropsOpenedByType,
+  resolveHunterLevel,
   EMPTY_DROPS_OPENED,
   type DropsOpenedByType,
 } from '../hunterLevel'
@@ -84,7 +87,7 @@ export interface UserSettings {
   /** دەنگی کردنەوەی سندوق/درۆپ */
   chestSoundEnabled: boolean
   chestVolume: number
-  /** دۆخی تارمایی — کاتێک لاپەڕە دەچێتە باکگراوند، خێرا ئۆفلاین دیار بکە */
+  /** وونم بکە کاتێک ئۆفلاینم — ئەگەر true بێت ئەڤاتار لە نەخشە دەشاردرێتەوە */
   hideWhenOffline: boolean
   /** بلۆککراوەکان لە نەخشە/لیستی نزیک شاردنەوە */
   hideBlockedUsers: boolean
@@ -101,6 +104,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   radarAlertsEnabled: true,
   friendRequestNotifsEnabled: true,
   showOtherPlayers: true,
+  /** هەژماری نوێ: ئەڤاتار لەسەر نەخشە بۆ هەموو هەژمار پیشان بدرێت */
   showMyAvatarOnMap: true,
   batterySaver: false,
   highGraphics: true,
@@ -117,10 +121,11 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   giftVolume: 1,
   chestSoundEnabled: true,
   chestVolume: 1,
-  hideWhenOffline: true,
+  /** هەژماری نوێ: ناچاڵاک — کاتێک ئۆفلاین دەبیت ئەڤاتار دەمێنێتەوە + last-seen */
+  hideWhenOffline: false,
   hideBlockedUsers: false,
   hideGlobalChat: false,
-  /** false = تەنها هاوڕێ نامە بنێرێت؛ default true = هەموو کەس (تۆگڵەکە ناچاڵاک) */
+  /** هەژماری نوێ: چالاک — نامە بێ هاوڕێیەتی ڕێگەپێدراوە */
   allowDmWithoutFriendship: true,
 }
 
@@ -181,6 +186,10 @@ export interface UserProfile {
   playerXp: number
   /** خەڵاتی بەخێرهاتن جارێک دراوە */
   welcomeBonusGranted: boolean
+  /** کاتی دروستکردنی هەژمار (ms) */
+  createdAtMs: number | null
+  /** کۆی دیاری ناردن (خاڵی سەرکردە) */
+  giftsSentScore: number
 }
 
 export const MAX_FRIENDS = 100
@@ -513,9 +522,12 @@ const DEFAULT_TITLE = 'ڕاوکەر'
 
 /** خەڵاتی بەخێرهاتن — باڵانسی دەستپێکی ستاندارد بۆ هەموو کەسایەتییە نوێیەکان */
 export const WELCOME_BONUS_GOLD = 500
-export const WELCOME_BONUS_DIAMOND = 35
+export const WELCOME_BONUS_DIAMOND = 25
 /** دەبێت لەگەڵ LEADERBOARD_EPOCH بگونجێت (leaderboardService) */
 export const GAMEPLAY_LEADERBOARD_EPOCH = 3
+/** وەشانی ڕیسێتی گشتی — نابێت دووبارە داخڵبوون باڵانس سفر بکاتەوە */
+export const GLOBAL_GAMEPLAY_RESET_VERSION = 4
+export const ACCOUNT_GAMEPLAY_RESET_VERSION = GLOBAL_GAMEPLAY_RESET_VERSION
 
 /** Standard starting wallet (diamond = gems, gold) */
 export function getDefaultStartingWallet(): Pick<UserProfile, 'gold' | 'diamond'> {
@@ -556,6 +568,11 @@ export type UserDataLocalCache = {
   hunterLevel: number
   name: string
   username: string
+  email?: string
+  phone?: string
+  usernameEditUsed?: boolean
+  emailEditUsed?: boolean
+  phoneEditUsed?: boolean
   gender: Gender
   title: string
   avatarUrl: string | null
@@ -568,6 +585,8 @@ export type UserDataLocalCache = {
   spinLastFreeAtMs?: number | null
   spinSpinsInWindow?: number
   readNotificationIds?: string[]
+  createdAtMs?: number | null
+  giftsSentScore?: number
   cachedAtMs: number
 }
 
@@ -599,6 +618,11 @@ export function saveUserDataLocal(
     hunterLevel?: number
     name?: string
     username?: string
+    email?: string
+    phone?: string
+    usernameEditUsed?: boolean
+    emailEditUsed?: boolean
+    phoneEditUsed?: boolean
     gender?: Gender
     title?: string
     avatarUrl?: string | null
@@ -611,6 +635,8 @@ export function saveUserDataLocal(
     spinLastFreeAtMs?: number | null
     spinSpinsInWindow?: number
     readNotificationIds?: string[]
+    createdAtMs?: number | null
+    giftsSentScore?: number
   },
 ): void {
   if (typeof localStorage === 'undefined') return
@@ -633,6 +659,11 @@ export function saveUserDataLocal(
       hunterLevel: Math.max(0, Math.floor(data.hunterLevel ?? prev?.hunterLevel ?? 0)),
       name: data.name ?? prev?.name ?? 'یاریزان',
       username: data.username ?? prev?.username ?? '',
+      email: data.email !== undefined ? data.email : (prev?.email ?? ''),
+      phone: data.phone !== undefined ? data.phone : (prev?.phone ?? ''),
+      usernameEditUsed: data.usernameEditUsed === true || prev?.usernameEditUsed === true,
+      emailEditUsed: data.emailEditUsed === true || prev?.emailEditUsed === true,
+      phoneEditUsed: data.phoneEditUsed === true || prev?.phoneEditUsed === true,
       gender: data.gender === 'female' || data.gender === 'male' ? data.gender : (prev?.gender ?? 'male'),
       title: data.title ?? prev?.title ?? DEFAULT_TITLE,
       avatarUrl: data.avatarUrl !== undefined ? data.avatarUrl : (prev?.avatarUrl ?? null),
@@ -653,6 +684,14 @@ export function saveUserDataLocal(
       readNotificationIds: Array.isArray(data.readNotificationIds)
         ? data.readNotificationIds.slice(-400)
         : (prev?.readNotificationIds ?? []),
+      createdAtMs: data.createdAtMs !== undefined
+        ? data.createdAtMs
+        : (prev?.createdAtMs ?? null),
+      giftsSentScore: Math.max(0, Math.floor(
+        data.giftsSentScore !== undefined
+          ? data.giftsSentScore
+          : (prev?.giftsSentScore ?? 0),
+      )),
       cachedAtMs: Date.now(),
     }
     const json = JSON.stringify(payload)
@@ -702,6 +741,13 @@ export function loadUserDataLocal(id: string): UserDataLocalCache | null {
       spinLastFreeAtMs: parseEpochMs(data.spinLastFreeAtMs),
       spinSpinsInWindow: Math.max(0, Math.floor(Number(data.spinSpinsInWindow) || 0)),
       readNotificationIds: parseReadNotificationIds(data.readNotificationIds),
+      email: typeof data.email === 'string' ? data.email : '',
+      phone: typeof data.phone === 'string' ? data.phone : '',
+      usernameEditUsed: data.usernameEditUsed === true,
+      emailEditUsed: data.emailEditUsed === true,
+      phoneEditUsed: data.phoneEditUsed === true,
+      createdAtMs: parseCreatedAtMs(data.createdAtMs ?? data.createdAt),
+      giftsSentScore: Math.max(0, Math.floor(Number(data.giftsSentScore) || 0)),
       cachedAtMs: Number(data.cachedAtMs) || 0,
     }
   } catch (err) {
@@ -712,26 +758,20 @@ export function loadUserDataLocal(id: string): UserDataLocalCache | null {
 }
 
 function createDefaultProfile(): UserProfile {
-  const gender: Gender = Math.random() < 0.5 ? 'male' : 'female'
-  const names = gender === 'male' ? maleNames : femaleNames
-  const name = names[Math.floor(Math.random() * names.length)]
   return {
-    name,
+    name: 'یاریزان',
     username: '',
     email: '',
     phone: '',
     usernameEditUsed: false,
     emailEditUsed: false,
     phoneEditUsed: false,
-    gender,
+    gender: 'male',
     ...getDefaultStartingWallet(),
     isPremium: false,
     title: DEFAULT_TITLE,
     avatarUrl: null,
-    avatar3d: {
-      ...DEFAULT_AVATAR_3D,
-      hairStyle: gender === 'female' ? 'long' : 'short',
-    },
+    avatar3d: { ...DEFAULT_AVATAR_3D, hairStyle: 'short' },
     playerId: '',
     settings: { ...DEFAULT_USER_SETTINGS },
     stats: { ...DEFAULT_PLAYER_STATS },
@@ -740,6 +780,8 @@ function createDefaultProfile(): UserProfile {
     playerLevel: 1,
     playerXp: 0,
     welcomeBonusGranted: true,
+    createdAtMs: Date.now(),
+    giftsSentScore: 0,
   }
 }
 
@@ -900,16 +942,23 @@ function mergePlayerProgressIntoUser(
     playerId: typeof playerData.playerId === 'string' && playerData.playerId
       ? playerData.playerId
       : base.playerId,
-    name: typeof playerData.name === 'string' && playerData.name.trim()
-      ? playerData.name
-      : base.name,
+    name: base.username
+      ? base.name
+      : (typeof playerData.name === 'string' && playerData.name.trim()
+        ? playerData.name
+        : base.name),
+    username: base.username
+      || (typeof playerData.username === 'string' ? playerData.username : ''),
     inventory: playerData.inventory != null ? parseInventory(playerData.inventory) : base.inventory,
     dropsOpenedByType: playerData.dropsOpenedByType != null
       ? parseDropsOpenedByType(playerData.dropsOpenedByType)
       : base.dropsOpenedByType,
-    hunterLevel: playerData.hunterLevel != null
-      ? Math.max(0, Math.floor(Number(playerData.hunterLevel) || 0))
-      : base.hunterLevel,
+    hunterLevel: resolveHunterLevel(
+      playerData.hunterLevel != null ? playerData.hunterLevel : base.hunterLevel,
+      playerData.dropsOpenedByType != null
+        ? parseDropsOpenedByType(playerData.dropsOpenedByType)
+        : base.dropsOpenedByType,
+    ),
     playerLevel: playerData.playerLevel != null
       ? Math.max(1, Math.floor(Number(playerData.playerLevel) || 1))
       : base.playerLevel,
@@ -969,6 +1018,11 @@ function cacheFromFullUser(uid: string, data: FullUserData): void {
     hunterLevel: data.hunterLevel,
     name: data.name,
     username: data.username,
+    email: data.email,
+    phone: data.phone,
+    usernameEditUsed: data.usernameEditUsed,
+    emailEditUsed: data.emailEditUsed,
+    phoneEditUsed: data.phoneEditUsed,
     gender: data.gender,
     title: data.title,
     avatarUrl: data.avatarUrl,
@@ -981,6 +1035,8 @@ function cacheFromFullUser(uid: string, data: FullUserData): void {
     spinLastFreeAtMs: data.spinLastFreeAtMs,
     spinSpinsInWindow: data.spinSpinsInWindow,
     readNotificationIds: data.readNotificationIds,
+    createdAtMs: data.createdAtMs,
+    giftsSentScore: data.giftsSentScore,
   })
 }
 
@@ -1119,12 +1175,25 @@ export function hasActiveStealShield(
   })
 }
 
+function parseCreatedAtMs(raw: unknown): number | null {
+  if (raw == null) return null
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return Math.floor(raw)
+  if (typeof raw === 'object') {
+    const o = raw as { toMillis?: () => number; seconds?: number }
+    if (typeof o.toMillis === 'function') {
+      const ms = o.toMillis()
+      return Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : null
+    }
+    if (typeof o.seconds === 'number' && Number.isFinite(o.seconds)) {
+      return Math.floor(o.seconds * 1000)
+    }
+  }
+  return null
+}
+
 function parseFullUserData(data: Record<string, unknown>): FullUserData {
   const dropsOpenedByType = parseDropsOpenedByType(data.dropsOpenedByType)
-  const storedLevel = Number(data.hunterLevel)
-  const hunterLevel = Number.isFinite(storedLevel) && storedLevel >= 0
-    ? Math.floor(storedLevel)
-    : computeHunterLevel(dropsOpenedByType)
+  const hunterLevel = resolveHunterLevel(data.hunterLevel, dropsOpenedByType)
   return {
     name: String(data.name ?? 'یاریزان'),
     username: typeof data.username === 'string' ? data.username : '',
@@ -1155,6 +1224,8 @@ function parseFullUserData(data: Record<string, unknown>): FullUserData {
     playerLevel: Math.max(1, Math.floor(Number(data.playerLevel) || 1)),
     playerXp: Math.max(0, Math.floor(Number(data.playerXp) || 0)),
     welcomeBonusGranted: Boolean(data.welcomeBonusGranted),
+    createdAtMs: parseCreatedAtMs(data.createdAtMs ?? data.createdAt),
+    giftsSentScore: Math.max(0, Math.floor(Number(data.giftsSentScore) || 0)),
     inventory: parseInventory(data.inventory),
     dailyBonusDay: Math.max(1, Math.floor(Number(data.dailyBonusDay) || 1)),
     dailyBonusLastClaimMs: parseEpochMs(data.dailyBonusLastClaimMs),
@@ -1463,46 +1534,110 @@ async function reserveUniqueUsername(uid: string, username: string, email: strin
   const ref = doc(db, 'usernames', key)
   await runTransaction(db, async transaction => {
     const snap = await transaction.get(ref)
-    if (snap.exists()) throw new Error('ئەم ناوەی بەکارهێنەرە پێشتر گیراوە.')
+    if (snap.exists()) {
+      const owner = String(snap.data()?.uid ?? '')
+      if (owner && owner !== uid) throw new Error('ئەم ناوەی بەکارهێنەرە پێشتر گیراوە.')
+    }
     transaction.set(ref, { uid, email: email.toLowerCase(), createdAt: serverTimestamp() })
   })
 }
 
-/** دروستکردنی پرۆفایلی یاریزانی تۆمارکراو بە باڵانسی ستاندارد */
+/** لە کاتی تۆمارکردندا — ڕێگری لە دروستکردنی پرۆفایلی بەتاڵ لەلایەن getOrCreateUser */
+export const REG_INFLIGHT_KEY = 'kd_reg_inflight'
+
+export function setRegistrationInflight(on: boolean): void {
+  try {
+    if (typeof sessionStorage === 'undefined') return
+    if (on) sessionStorage.setItem(REG_INFLIGHT_KEY, '1')
+    else sessionStorage.removeItem(REG_INFLIGHT_KEY)
+  } catch { /* ignore */ }
+}
+
+function isRegistrationInflight(): boolean {
+  try {
+    return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(REG_INFLIGHT_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** دروستکردنی پرۆفایلی یاریزانی تۆمارکراو بە باڵانسی ستاندارد (٥٠٠ زێڕ + ٢٥ ئەڵماس) */
 export async function createRegisteredUserProfile(
   uid: string,
-  opts: { fullName: string; username: string; email: string; phone: string },
+  opts: { fullName: string; username: string; email: string; phone: string; gender: Gender },
 ): Promise<FullUserData> {
   const ref = doc(db, 'users', uid)
-  const existing = await getDoc(ref)
-  if (existing.exists()) {
-    let parsed = parseFullUserData(existing.data() as Record<string, unknown>)
-    if (!parsed.playerId) {
-      parsed.playerId = await reserveUniquePlayerId(uid)
-      await updateDoc(ref, { playerId: parsed.playerId, updatedAt: serverTimestamp() })
-    }
-    rememberPlayerId(uid, parsed.playerId)
-    const playerDoc = await ensurePlayerProgressDoc(parsed.playerId, uid, parsed)
-    parsed = mergePlayerProgressIntoUser(parsed, playerDoc)
-    cacheFromFullUser(uid, parsed)
-    return parsed
-  }
-
   const fullName = opts.fullName.trim()
   if (fullName.length < 2) throw new Error('ناوی تەواو بنووسە.')
-  const phone = await reserveUniquePhone(uid, opts.phone, opts.email)
-  await reserveUniqueUsername(uid, opts.username, opts.email)
-  const playerId = await reserveUniquePlayerId(uid)
-  const gender: Gender = Math.random() < 0.5 ? 'male' : 'female'
-  const wallet = getDefaultStartingWallet()
+  if (opts.gender !== 'male' && opts.gender !== 'female') {
+    throw new Error('ڕەگەز دیاری بکە (نێر یان مێ).')
+  }
+  const email = opts.email.trim().toLowerCase()
+  const phone = await reserveUniquePhone(uid, opts.phone, email)
+  await reserveUniqueUsername(uid, opts.username, email)
+  const username = normalizeUsername(opts.username)
+  const gender: Gender = opts.gender
   const avatar3d = {
     ...DEFAULT_AVATAR_3D,
     hairStyle: gender === 'female' ? 'long' as const : 'short' as const,
   }
+
+  const existing = await getDoc(ref)
+  if (existing.exists()) {
+    // ڕەقەبەری bootstrap — پرۆفایلی بەتاڵ دروست بووە؛ ناسنامەی تۆمارکردن دەنووسینەوە
+    let parsed = parseFullUserData(existing.data() as Record<string, unknown>)
+    if (!parsed.playerId) {
+      parsed.playerId = await reserveUniquePlayerId(uid)
+    }
+    rememberPlayerId(uid, parsed.playerId)
+    await setDoc(ref, {
+      name: fullName,
+      username,
+      email,
+      phone,
+      gender,
+      avatar3d,
+      playerId: parsed.playerId,
+      usernameEditUsed: false,
+      emailEditUsed: false,
+      phoneEditUsed: false,
+      createdAtMs: parsed.createdAtMs ?? Date.now(),
+      updatedAt: serverTimestamp(),
+    }, { merge: true })
+    await setDoc(doc(db, 'players', parsed.playerId), {
+      uid,
+      playerId: parsed.playerId,
+      name: fullName,
+      username,
+      email,
+      phone,
+      gender,
+      avatar3d,
+      updatedAt: serverTimestamp(),
+    }, { merge: true })
+    const fresh = await getDoc(ref)
+    parsed = parseFullUserData(fresh.data() as Record<string, unknown>)
+    const playerDoc = await ensurePlayerProgressDoc(parsed.playerId, uid, parsed)
+    parsed = mergePlayerProgressIntoUser(parsed, playerDoc)
+    // ناسنامە لە users سەرچاوەی ڕاستەقینەیە — merge نابێت name بگۆڕێت بۆ ناوی هەڵە
+    parsed = {
+      ...parsed,
+      name: fullName,
+      username,
+      email,
+      phone,
+      gender,
+    }
+    cacheFromFullUser(uid, parsed)
+    return parsed
+  }
+
+  const playerId = await reserveUniquePlayerId(uid)
+  const wallet = getDefaultStartingWallet()
   const payload = {
     name: fullName,
-    username: normalizeUsername(opts.username),
-    email: opts.email.trim().toLowerCase(),
+    username,
+    email,
     phone,
     usernameEditUsed: false,
     emailEditUsed: false,
@@ -1533,15 +1668,16 @@ export async function createRegisteredUserProfile(
     totalWealth: 0,
     giftsSentScore: 0,
     leaderboardEpoch: GAMEPLAY_LEADERBOARD_EPOCH,
+    gameplayResetVersion: ACCOUNT_GAMEPLAY_RESET_VERSION,
     createdAt: serverTimestamp(),
+    createdAtMs: Date.now(),
     updatedAt: serverTimestamp(),
   }
   await setDoc(ref, payload)
-  // Canonical progress under players/{playerId} with starting balances
   await ensurePlayerProgressDoc(playerId, uid, {
     ...wallet,
     name: fullName,
-    username: normalizeUsername(opts.username),
+    username,
     gender,
     avatar3d,
     playerLevel: 1,
@@ -1554,8 +1690,15 @@ export async function createRegisteredUserProfile(
     giftsSentScore: 0,
     leaderboardEpoch: GAMEPLAY_LEADERBOARD_EPOCH,
   })
-  await setDoc(doc(db, 'players', playerId), { phone, email: opts.email.trim().toLowerCase() }, { merge: true })
-  const created = parseFullUserData(payload as unknown as Record<string, unknown>)
+  await setDoc(doc(db, 'players', playerId), {
+    phone,
+    email,
+    name: fullName,
+    username,
+    gender,
+    gameplayResetVersion: ACCOUNT_GAMEPLAY_RESET_VERSION,
+  }, { merge: true })
+  const created = parseFullUserData({ ...payload, createdAtMs: payload.createdAtMs })
   cacheFromFullUser(uid, created)
   return created
 }
@@ -1725,10 +1868,6 @@ export async function factoryResetAllCharacters(): Promise<{ resetUsers: number;
   return { resetUsers, resetPlayers }
 }
 
-/** وەشانی گشتی سفرکردنەوە — تەنها جارێک لە هەموو کڕیارەکاندا دەڕوات */
-export const GLOBAL_GAMEPLAY_RESET_VERSION = 4
-export const ACCOUNT_GAMEPLAY_RESET_VERSION = GLOBAL_GAMEPLAY_RESET_VERSION
-
 function buildFreshGameplayFields(wallet: Pick<UserProfile, 'gold' | 'diamond'>) {
   return {
     ...wallet,
@@ -1887,7 +2026,19 @@ export async function runGlobalGameplayResetIfNeeded(): Promise<{ ran: boolean; 
 
 export async function getOrCreateUser(uid: string): Promise<FullUserData> {
   const ref = doc(db, 'users', uid)
-  const snap = await getDoc(ref)
+  let snap = await getDoc(ref)
+
+  // چاوەڕوانی تەواوبوونی تۆمارکردن — ڕێگری لە پرۆفایلی بەتاڵ/ناوی هەڕەمەکی
+  if (!snap.exists() && isRegistrationInflight()) {
+    let delay = 80
+    for (let i = 0; i < 40 && !snap.exists(); i++) {
+      await new Promise(r => setTimeout(r, delay))
+      snap = await getDoc(ref)
+      if (snap.exists()) break
+      if (!isRegistrationInflight()) break
+      delay = Math.min(250, Math.floor(delay * 1.35))
+    }
+  }
 
   if (snap.exists()) {
     const raw = snap.data() as Record<string, unknown>
@@ -1917,6 +2068,11 @@ export async function getOrCreateUser(uid: string): Promise<FullUserData> {
     )
     cacheFromFullUser(uid, parsed)
     return parsed
+  }
+
+  // هێشتا تۆمارکردن بەردەوامە — دروستکردنی پرۆفایلی بەتاڵ قەدەغەیە
+  if (isRegistrationInflight()) {
+    throw new Error('تۆمارکردن هێشتا بەردەوامە — دووبارە هەوڵ بدە.')
   }
 
   const profile = createDefaultProfile()
@@ -2120,14 +2276,35 @@ export function saveUserSettingsLocal(uid: string, partial: Partial<UserSettings
   return next
 }
 
-export async function syncUserSettings(uid: string, partial: Partial<UserSettings>) {
-  saveUserSettingsLocal(uid, partial)
+/** Batch + debounce Firestore settings writes — UI stays instant via localStorage */
+const pendingSettingsPatches = new Map<string, Partial<UserSettings>>()
+const settingsFlushTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+async function flushUserSettings(uid: string): Promise<void> {
+  settingsFlushTimers.delete(uid)
+  const partial = pendingSettingsPatches.get(uid)
+  pendingSettingsPatches.delete(uid)
+  if (!partial || Object.keys(partial).length === 0) return
   const ref = doc(db, 'users', uid)
   const payload: Record<string, unknown> = { updatedAt: serverTimestamp() }
   for (const [key, value] of Object.entries(partial)) {
     payload[`settings.${key}`] = value
   }
-  await updateDoc(ref, payload as Record<string, import('firebase/firestore').FieldValue | Partial<unknown>>)
+  try {
+    await updateDoc(ref, payload as Record<string, import('firebase/firestore').FieldValue | Partial<unknown>>)
+  } catch (err) {
+    console.error('syncUserSettings flush failed:', err)
+  }
+}
+
+/** خێرا: local یەکسەر؛ Firestore دوای کەمێک (merge) بۆ ئەوەی تۆگڵ خاو نەبێت */
+export async function syncUserSettings(uid: string, partial: Partial<UserSettings>) {
+  saveUserSettingsLocal(uid, partial)
+  const merged = { ...(pendingSettingsPatches.get(uid) ?? {}), ...partial }
+  pendingSettingsPatches.set(uid, merged)
+  const prevTimer = settingsFlushTimers.get(uid)
+  if (prevTimer) clearTimeout(prevTimer)
+  settingsFlushTimers.set(uid, setTimeout(() => { void flushUserSettings(uid) }, 90))
 }
 
 /** سڕینەوەی هەمیشەیی داتای هەژمار لە Firestore — پێش سڕینەوەی هەژماری Firebase Auth بانگ بکرێت */
@@ -2364,10 +2541,7 @@ export async function purchaseMarketItem(
     })
 
     const dropsOpenedByType = parseDropsOpenedByType(data.dropsOpenedByType)
-    const storedLevel = Number(data.hunterLevel)
-    const hunterLevel = Number.isFinite(storedLevel) && storedLevel >= 0
-      ? Math.floor(storedLevel)
-      : computeHunterLevel(dropsOpenedByType)
+    const hunterLevel = resolveHunterLevel(data.hunterLevel, dropsOpenedByType)
 
     return {
       name: String(data.name ?? 'یاریزان'),
@@ -2620,12 +2794,8 @@ export async function getUserPublicProfile(uid: string): Promise<(Pick<UserProfi
   const snap = await getDoc(ref)
   if (!snap.exists()) return null
   const data = snap.data()
-  // Avatar click / public sheet: read cached fields only — never run drop-level math here
   const dropsOpenedByType = parseDropsOpenedByType(data.dropsOpenedByType)
-  const storedLevel = Number(data.hunterLevel)
-  const hunterLevel = Number.isFinite(storedLevel) && storedLevel >= 0
-    ? Math.floor(storedLevel)
-    : 0
+  const hunterLevel = resolveHunterLevel(data.hunterLevel, dropsOpenedByType)
   const name =
     typeof data.name === 'string' && data.name.trim()
       ? data.name.trim()
@@ -2809,18 +2979,6 @@ export async function blockUserPersist(
   blockerName?: string,
   reason?: string,
 ): Promise<void> {
-  if (isProtectedAccount({ uid: target.uid })) {
-    throw new Error('ناتوانیت ئەم هەژمارە بلۆک بکەیت')
-  }
-  try {
-    const targetSnap = await getDoc(doc(db, 'users', target.uid))
-    const pid = typeof targetSnap.data()?.playerId === 'string' ? String(targetSnap.data()!.playerId) : ''
-    if (isProtectedAccount({ uid: target.uid, playerId: pid })) {
-      throw new Error('ناتوانیت ئەم هەژمارە بلۆک بکەیت')
-    }
-  } catch (err) {
-    if (err instanceof Error && err.message.includes('بلۆک')) throw err
-  }
   const ref = doc(db, 'users', uid)
   await updateDoc(ref, { blockedUsers: arrayUnion(target), updatedAt: serverTimestamp() })
   const name = blockerName?.trim() || 'یاریزان'
@@ -2861,9 +3019,6 @@ export async function unblockUserPersist(uid: string, target: BlockedUser, block
 export async function sendGift(fromUid: string, fromName: string, toUid: string, amount: number): Promise<void> {
   if (fromUid === toUid) throw new Error('نەتوانیت دیاری بۆ خۆت بنێریت')
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('بڕی هەڵەیە')
-  if (isProtectedAccount({ uid: toUid })) {
-    throw new Error('ناتوانیت دیاری بۆ ئەم هەژمارە بنێریت')
-  }
   const fromRef = doc(db, 'users', fromUid)
   const toRef = doc(db, 'users', toUid)
   await runTransaction(db, async transaction => {
@@ -2871,8 +3026,9 @@ export async function sendGift(fromUid: string, fromName: string, toUid: string,
     const toSnap = await transaction.get(toRef)
     if (!fromSnap.exists() || !toSnap.exists()) throw new Error('هەژمار نەدۆزرایەوە')
     const toPid = typeof toSnap.data().playerId === 'string' ? String(toSnap.data().playerId) : ''
+    // باڵانسی جێگیر — دیاری نامێنێتەوە؛ وەک داخستنی وەرگرتن
     if (isProtectedAccount({ uid: toUid, playerId: toPid })) {
-      throw new Error('ناتوانیت دیاری بۆ ئەم هەژمارە بنێریت')
+      throw new Error('ئەم یاریزانە وەرگرتنی دیاری داخستووە')
     }
     const toSettings = toSnap.data().settings
     if (toSettings != null && typeof toSettings === 'object' && (toSettings as Record<string, unknown>).blockIncomingGifts === true) {
@@ -2986,6 +3142,11 @@ export async function startHeist(
     const thiefData = thiefSnap.data()
     const victimData = victimSnap.data()
     const thiefName = String(thiefData.name ?? 'یاریزان')
+    const victimPid = typeof victimData.playerId === 'string' ? String(victimData.playerId) : ''
+    // باڵانسی جێگیر — دزی دەبێتە دروستکردنی زێڕی بێکۆتایی، وەک قەڵغان مامەڵە دەکرێت
+    if (isProtectedAccount({ uid: victimUid, playerId: victimPid })) {
+      throw new Error('قەڵغانی پاراستن چالاکە — ناتوانیت بدزیت')
+    }
 
     const cooldownUntil = Number(thiefData.stealCooldownUntilMs) || 0
     if (cooldownUntil > now) {
@@ -3192,6 +3353,10 @@ export async function completeSteal(
     const thiefSnap = await transaction.get(thiefRef)
     const victimSnap = await transaction.get(victimRef)
     if (!thiefSnap.exists() || !victimSnap.exists()) throw new Error('هەژمار نەدۆزرایەوە')
+    const victimPidEarly = typeof victimSnap.data().playerId === 'string' ? String(victimSnap.data().playerId) : ''
+    if (isProtectedAccount({ uid: victimUid, playerId: victimPidEarly })) {
+      throw new Error('قەڵغانی پاراستن چالاکە — ناتوانیت بدزیت')
+    }
 
     let heist: HeistSession | null = null
     if (heistId) {
@@ -3562,7 +3727,7 @@ export async function uploadDmMedia(threadId: string, fileName: string, blob: Bl
   }
 }
 
-const DM_UPLOAD_TIMEOUT_MS = 22_000
+const DM_UPLOAD_TIMEOUT_MS = 45_000
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -3585,14 +3750,14 @@ export async function uploadDmMediaWithProgress(
   try {
     if (!blob || blob.size <= 0) return null
 
-    // فایلی بچووک (وەک وێنەی DM): یەک-جار uploadBytes — خێراتر و کەمتر «ستەک»
-    if (blob.size <= 280_000) {
-      onProgress?.(8)
-      let pulse = 8
+    // تا ~١.٦MB: uploadBytes یەکجار — خێراتر لە resumable بۆ وێنەی چات
+    if (blob.size <= 1_600_000) {
+      onProgress?.(10)
+      let pulse = 10
       const iv = window.setInterval(() => {
-        pulse = Math.min(86, pulse + 10)
+        pulse = Math.min(88, pulse + 12)
         onProgress?.(pulse)
-      }, 160)
+      }, 120)
       try {
         const url = await withTimeout(
           uploadDmMedia(threadId, fileName, blob, contentType),
@@ -3670,6 +3835,8 @@ export async function sendPrivateMessage(
     mediaUrl?: string | null
     recipientOnline?: boolean
     clientTempId?: string | null
+    /** کڵایەنت پێشتر بلۆکی پشکنیوە — ٢ خوێندنەوە دەپەڕێنێت */
+    skipBlockCheck?: boolean
   },
 ): Promise<void> {
   if (fromUid === toUid) throw new Error('نەتوانیت نامە بۆ خۆت بنێریت')
@@ -3688,87 +3855,85 @@ export async function sendPrivateMessage(
   const recipientOnline = opts?.recipientOnline === true
   const status: DmDeliveryStatus = recipientOnline ? 'delivered' : 'sent'
 
-  const [blocked, toSnap, threadSnap] = await Promise.all([
-    isDmBlockedBetween(fromUid, toUid),
-    getDoc(doc(db, 'users', toUid)),
-    getDoc(threadRef),
-  ])
-  if (blocked) {
-    throw new Error('🚫 نامە ناردن ڕێگەپێنەدراوە — یەکێکتان بلۆک کراوە')
+  // بلۆک: تەنها کاتێک کڵایەنت پشکنینی نەکردبێت
+  if (!opts?.skipBlockCheck) {
+    if (await isDmBlockedBetween(fromUid, toUid)) {
+      throw new Error('🚫 نامە ناردن ڕێگەپێنەدراوە — یەکێکتان بلۆک کراوە')
+    }
   }
 
-  // ئایا وەرگر چاتی نێرەری سڕ کردووە؟
-  const mutedByRecipient =
-    kind !== 'system' &&
-    toSnap.exists() &&
-    parseStringUidList(toSnap.data().mutedChatUids).includes(fromUid)
+  // Mute — یەک خوێندنەوەی سووک (بێ خوێندنەوەی thread)
+  let mutedByRecipient = false
+  if (kind !== 'system') {
+    try {
+      const toSnap = await getDoc(doc(db, 'users', toUid))
+      mutedByRecipient =
+        toSnap.exists() &&
+        parseStringUidList(toSnap.data().mutedChatUids).includes(fromUid)
+    } catch { /* fail-open: بنێرە */ }
+  }
 
-  const prevUnread = (threadSnap.exists() && threadSnap.data().unread && typeof threadSnap.data().unread === 'object')
-    ? { ...(threadSnap.data().unread as Record<string, number>) }
-    : {}
-  const prevHidden = Array.isArray(threadSnap.data()?.threadHiddenFor)
-    ? [...(threadSnap.data()!.threadHiddenFor as string[])]
-    : []
-  // گفتوگۆی شارکراوە بۆ وەرگر دەگەڕێتەوە کاتێک نامەی نوێ دێت (تەنها ئەگەر mute نەبێت)
-  const threadHiddenFor = mutedByRecipient
-    ? prevHidden
-    : prevHidden.filter(uid => uid !== toUid)
+  const msgPayload: Record<string, unknown> = {
+    from: fromUid,
+    text: trimmed.slice(0, 500),
+    kind,
+    mediaUrl,
+    hiddenFor: mutedByRecipient ? [toUid] : [],
+    status,
+    deliveredAt: recipientOnline ? now : null,
+    seenAt: null,
+    createdAtMs: now,
+    createdAt: serverTimestamp(),
+  }
+  if (clientTempId) msgPayload.clientTempId = clientTempId
 
-  const nextUnread = { ...prevUnread }
-  if (!mutedByRecipient && kind !== 'system') {
-    nextUnread[toUid] = (Number(prevUnread[toUid]) || 0) + 1
+  if (mutedByRecipient) {
+    // وەرگر نابینێت — تەنها نێرەر؛ unread زیاد مەکە
+    const sysRef = doc(collection(db, 'dmThreads', threadId, 'messages'))
+    const sysNow = now + 1
+    await Promise.all([
+      setDoc(msgRef, msgPayload),
+      setDoc(sysRef, {
+        from: 'system',
+        text: MUTE_SYSTEM_MESSAGE,
+        kind: 'system',
+        mediaUrl: null,
+        hiddenFor: [toUid],
+        status: 'delivered',
+        deliveredAt: sysNow,
+        seenAt: null,
+        createdAtMs: sysNow,
+        createdAt: serverTimestamp(),
+      }),
+      setDoc(threadRef, {
+        participants: [fromUid, toUid],
+        names: { [fromUid]: fromName, [toUid]: toName },
+        lastMessage: MUTE_SYSTEM_MESSAGE.slice(0, 200),
+        updatedAtMs: sysNow,
+        updatedAt: serverTimestamp(),
+      }, { merge: true }),
+    ])
+    return
+  }
+
+  // ڕێگای خێرا: نووسین دەستبەجێ + increment بێ getDocـی thread
+  const threadPayload: Record<string, unknown> = {
+    participants: [fromUid, toUid],
+    names: { [fromUid]: fromName, [toUid]: toName },
+    lastMessage: preview,
+    updatedAtMs: now,
+    updatedAt: serverTimestamp(),
+  }
+  if (kind !== 'system') {
+    threadPayload[`unread.${toUid}`] = increment(1)
   }
 
   await Promise.all([
-    setDoc(threadRef, {
-      participants: [fromUid, toUid],
-      names: { [fromUid]: fromName, [toUid]: toName },
-      lastMessage: mutedByRecipient ? (typeof threadSnap.data()?.lastMessage === 'string' ? threadSnap.data()!.lastMessage : preview) : preview,
-      updatedAtMs: now,
-      updatedAt: serverTimestamp(),
-      unread: nextUnread,
-      threadHiddenFor,
-    }, { merge: true }),
-    setDoc(msgRef, {
-      from: fromUid,
-      text: trimmed.slice(0, 500),
-      kind,
-      mediaUrl,
-      hiddenFor: [],
-      status,
-      deliveredAt: recipientOnline ? now : null,
-      seenAt: null,
-      createdAtMs: now,
-      createdAt: serverTimestamp(),
-      ...(clientTempId ? { clientTempId } : {}),
-    }),
+    setDoc(msgRef, msgPayload),
+    setDoc(threadRef, threadPayload, { merge: true }),
   ])
-
-  // نامەی سیستەم تەنها بۆ نێرەر — وەرگری Mute نابینێت
-  if (mutedByRecipient) {
-    const sysRef = doc(collection(db, 'dmThreads', threadId, 'messages'))
-    const sysNow = Date.now() + 1
-    await setDoc(sysRef, {
-      from: 'system',
-      text: MUTE_SYSTEM_MESSAGE,
-      kind: 'system',
-      mediaUrl: null,
-      hiddenFor: [toUid],
-      status: 'delivered',
-      deliveredAt: sysNow,
-      seenAt: null,
-      createdAtMs: sysNow,
-      createdAt: serverTimestamp(),
-    })
-    // lastMessage بۆ نێرەر نوێ دەبێتەوە؛ unreadی وەرگر ناگۆڕدرێت
-    const senderPreviewUnread = { ...nextUnread }
-    await setDoc(threadRef, {
-      lastMessage: MUTE_SYSTEM_MESSAGE.slice(0, 200),
-      updatedAtMs: sysNow,
-      updatedAt: serverTimestamp(),
-      unread: senderPreviewUnread,
-    }, { merge: true })
-  }
+  // گفتوگۆی شارکراوە بگەڕێنەرەوە — دوای ناردن، بێ بلۆکردنی UI
+  void updateDoc(threadRef, { threadHiddenFor: arrayRemove(toUid) }).catch(() => {})
 }
 
 /** شارکردنەوەی نامە لە UI — هەرگیز لە داتابەیس ناسڕدرێتەوە */
@@ -3801,35 +3966,55 @@ export async function hideDmMessages(
   }))
 }
 
-/** کردنەوەی چات — unread دەسڕێتەوە و نامەکان دەکات بە بینرا */
-export async function markDmThreadRead(myUid: string, otherUid: string): Promise<void> {
+/**
+ * کردنەوەی چات — unread دەسڕێتەوە.
+ * - messageIds=[] → تەنها unread=0
+ * - messageIds=[...] → ئەو نامانە دەکات بە بینرا
+ * - messageIds نەدرا → fallback سووک (٤٠ نامە)
+ */
+export async function markDmThreadRead(
+  myUid: string,
+  otherUid: string,
+  messageIds?: string[],
+): Promise<void> {
   const threadId = dmThreadId(myUid, otherUid)
   const threadRef = doc(db, 'dmThreads', threadId)
   const now = Date.now()
   try {
-    const threadSnap = await getDoc(threadRef)
-    if (threadSnap.exists()) {
-      const prevUnread = (threadSnap.data().unread && typeof threadSnap.data().unread === 'object')
-        ? { ...(threadSnap.data().unread as Record<string, number>) }
-        : {}
-      prevUnread[myUid] = 0
-      await setDoc(threadRef, { unread: prevUnread }, { merge: true })
-    }
+    await setDoc(threadRef, { [`unread.${myUid}`]: 0 }, { merge: true })
   } catch (err) {
     console.error('Clear DM unread failed:', err)
   }
 
+  // تەنها پاککردنەوەی unread
+  if (Array.isArray(messageIds) && messageIds.length === 0) return
+
   try {
-    const msgsSnap = await getDocs(collection(db, 'dmThreads', threadId, 'messages'))
-    const updates: Promise<void>[] = []
-    msgsSnap.forEach(d => {
-      const data = d.data()
-      if (String(data.from ?? '') === myUid) return
-      const status = parseDmStatus(data.status)
-      if (status === 'seen') return
-      updates.push(updateDoc(d.ref, { status: 'seen', seenAt: now, deliveredAt: data.deliveredAt ?? now }))
-    })
-    await Promise.all(updates)
+    let ids = Array.isArray(messageIds) ? messageIds.filter(Boolean) : []
+    if (!Array.isArray(messageIds)) {
+      const q = query(
+        collection(db, 'dmThreads', threadId, 'messages'),
+        where('status', 'in', ['sent', 'delivered']),
+        limit(40),
+      )
+      const msgsSnap = await getDocs(q)
+      ids = []
+      msgsSnap.forEach(d => {
+        if (String(d.data().from ?? '') === myUid) return
+        ids.push(d.id)
+      })
+    }
+    if (!ids.length) return
+    await Promise.all(ids.slice(0, 40).map(async id => {
+      if (!id || id.startsWith('optimistic:')) return
+      try {
+        await updateDoc(doc(db, 'dmThreads', threadId, 'messages', id), {
+          status: 'seen',
+          seenAt: now,
+          deliveredAt: now,
+        })
+      } catch { /* ignore */ }
+    }))
   } catch (err) {
     console.error('Mark DM seen failed:', err)
   }
@@ -3840,17 +4025,14 @@ export async function markIncomingDmDelivered(myUid: string, otherUid: string, m
   if (!messageIds.length) return
   const threadId = dmThreadId(myUid, otherUid)
   const now = Date.now()
-  await Promise.all(messageIds.map(async id => {
+  await Promise.all(messageIds.slice(0, 40).map(async id => {
+    if (!id || id.startsWith('optimistic:')) return
     try {
-      const msgRef = doc(db, 'dmThreads', threadId, 'messages', id)
-      const snap = await getDoc(msgRef)
-      if (!snap.exists()) return
-      const data = snap.data()
-      if (String(data.from ?? '') === myUid) return
-      const status = parseDmStatus(data.status)
-      if (status !== 'sent') return
-      await updateDoc(msgRef, { status: 'delivered', deliveredAt: now })
-    } catch {}
+      await updateDoc(doc(db, 'dmThreads', threadId, 'messages', id), {
+        status: 'delivered',
+        deliveredAt: now,
+      })
+    } catch { /* ignore */ }
   }))
 }
 
@@ -3880,12 +4062,12 @@ export async function hideDmThreadForUser(myUid: string, otherUid: string): Prom
 }
 
 export function subscribeToMyDmThreads(myUid: string, onUpdate: (threads: DmThreadSummary[]) => void): () => void {
-  return onSnapshot(collection(db, 'dmThreads'), snap => {
+  const q = query(collection(db, 'dmThreads'), where('participants', 'array-contains', myUid))
+  return onSnapshot(q, snap => {
     const list: DmThreadSummary[] = []
     snap.forEach(d => {
       const data = d.data()
       const participants = Array.isArray(data.participants) ? data.participants as string[] : []
-      if (!participants.includes(myUid)) return
       const hidden = Array.isArray(data.threadHiddenFor) ? data.threadHiddenFor as string[] : []
       if (hidden.includes(myUid)) return
       const otherUid = participants.find(p => p !== myUid) ?? ''

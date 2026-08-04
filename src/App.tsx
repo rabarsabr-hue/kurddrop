@@ -557,6 +557,8 @@ import {
 
   computeHunterLevel,
 
+  resolveHunterLevel,
+
   ensureDropsForMinLevel,
 
   type1CostForLevel,
@@ -641,9 +643,9 @@ import {
 
 import { realtimeSync } from './realtimeSync'
 
-import { signOutUser, onAuthReady } from './firebase'
+import { auth, signOutUser, onAuthReady } from './firebase'
 
-import { deleteOwnAccount, mapFirebaseAuthError, changeAccountPassword, changeAuthEmail } from './services/authService'
+import { deleteOwnAccount, mapFirebaseAuthError, changeAccountPassword, changeAuthEmail, clearAuthSessionHints } from './services/authService'
 
 import {
 
@@ -1014,6 +1016,15 @@ export default function App() {
   const dmVoiceRafRef = useRef<number | null>(null)
 
   const dmVoiceLocalUrlsRef = useRef<Set<string>>(new Set())
+  const dmVoiceDiscardRef = useRef(false)
+  const dmVoiceStreamRef = useRef<MediaStream | null>(null)
+  const dmVoiceMaxTimerRef = useRef<number | null>(null)
+  const dmVoiceTickRef = useRef<number | null>(null)
+  const dmVoiceStartXYRef = useRef<{ x: number; y: number } | null>(null)
+  const dmVoicePointerIdRef = useRef<number | null>(null)
+  const dmVoiceLockedRef = useRef(false)
+  const dmVoiceRecordingRef = useRef(false)
+  const dmVoicePendingActionRef = useRef<'none' | 'send' | 'discard'>('none')
 
   const dmChatScrollRef = useRef<HTMLDivElement>(null)
 
@@ -1590,8 +1601,8 @@ export default function App() {
   const [musicEnabled, setMusicEnabled] = useState(false)
   const [musicVolume, setMusicVolume] = useState(0.5)
 
-  const [hideWhenOffline, setHideWhenOffline] = useState(true)
-  const hideWhenOfflineRef = useRef(true)
+  const [hideWhenOffline, setHideWhenOffline] = useState(false)
+  const hideWhenOfflineRef = useRef(false)
 
   const [hideBlockedUsers, setHideBlockedUsers] = useState(false)
   const hideBlockedUsersRef = useRef(false)
@@ -1743,6 +1754,10 @@ export default function App() {
   const [dmDeleteConfirm,  setDmDeleteConfirm]  = useState(false)
 
   const [dmRecording,      setDmRecording]      = useState(false)
+  const [dmVoiceLocked,    setDmVoiceLocked]    = useState(false)
+  const [dmVoiceCancelArmed, setDmVoiceCancelArmed] = useState(false)
+  const [dmVoiceSeconds,   setDmVoiceSeconds]   = useState(0)
+  const [dmVoiceHint,      setDmVoiceHint]      = useState<'none' | 'cancel' | 'lock'>('none')
 
   const [dmVoiceLevels,    setDmVoiceLevels]    = useState<number[]>(() => Array.from({ length: 28 }, () => 0.12))
 
@@ -2105,6 +2120,8 @@ export default function App() {
 
       isOnline: boolean
 
+      lastSeenMs: number | null
+
       avatarUrl: string | null
 
       avatar3d: Avatar3DCustomization | null
@@ -2138,6 +2155,8 @@ export default function App() {
         distM,
 
         isOnline: p.isOnline,
+
+        lastSeenMs: p.lastSeenMs ?? null,
 
         avatarUrl: p.avatarUrl,
 
@@ -2223,7 +2242,8 @@ export default function App() {
 
     : 0
 
-  const playerName = userProfile?.name ?? 'یاریزان'
+  const playerFullName = userProfile?.name ?? 'یاریزان'
+  const playerName = (userProfile?.username?.trim() || playerFullName)
 
   const playerIdDisplay = userProfile?.playerId ?? ''
   const [idCopiedFlash, setIdCopiedFlash] = useState(false)
@@ -2500,9 +2520,7 @@ export default function App() {
 
     const safeUid = escapeAttr(String(uid ?? ''))
 
-    const locPid = onlinePlayersRef.current.get(uid)?.playerId
-    const clickable = !isProtectedAccount({ uid, playerId: locPid })
-    const clickClass = clickable ? 'kd-clickable-player' : 'kd-protected-player'
+    const clickClass = 'kd-clickable-player'
 
     // Chat slot دەرەوەی visual — filter/transform کلیپی bubble ناکات؛ float layer لەسەرەوەی gift
     return `<div class="avatar-inner ${clickClass}${isSelected ? ' kd-player-marker-selected' : ''}" data-uid="${safeUid}">
@@ -3012,7 +3030,7 @@ export default function App() {
 
     try {
 
-      map.panTo([focusLatLng.lat, focusLatLng.lng], { animate: true, duration: 0.55 })
+      map.panTo([focusLatLng.lat, focusLatLng.lng], { animate: true, duration: 0.28 })
 
       if (map.getZoom() < 16) map.setZoom(16, { animate: true })
 
@@ -3116,7 +3134,7 @@ export default function App() {
 
   }, [])
 
-  // هەژماری پارێزراو — زێڕ/ئەڵماس هەرگیز لە باڵانسی جێگیر خوارتر نابن (تەنانەت ئەگەر setWallet ڕاستەوخۆ بەکاربهێنرێت)
+  // هەژماری تایبەت — زێڕ/ئەڵماس هەمیشە لە باڵانسی جێگیر دەمێننەوە
   useEffect(() => {
     const uid = userIdRef.current
     const playerId = userProfileRef.current?.playerId
@@ -3425,28 +3443,15 @@ export default function App() {
   }, [openPrivateSheet, showGameAlert, friendsList])
 
   const handleBlockPlayer = useCallback((uid: string, name: string) => {
-    const loc = onlinePlayersRef.current.get(uid)
-    if (isProtectedAccount({ uid, playerId: loc?.playerId })) {
-      showGameAlert({ message: '🚫 ناتوانیت ئەم هەژمارە بلۆک بکەیت', tone: 'warn' })
-      return
-    }
     setBlockReasonText('')
     setBlockReasonTarget({ uid, name })
-  }, [showGameAlert])
+  }, [])
 
   const confirmBlockWithReason = useCallback(async () => {
 
     const target = blockReasonTarget
 
     if (!target) return
-
-    const loc = onlinePlayersRef.current.get(target.uid)
-    if (isProtectedAccount({ uid: target.uid, playerId: loc?.playerId })) {
-      showGameAlert({ message: '🚫 ناتوانیت ئەم هەژمارە بلۆک بکەیت', tone: 'warn' })
-      setBlockReasonTarget(null)
-      setBlockReasonText('')
-      return
-    }
 
     const myUid = userIdRef.current
 
@@ -3649,13 +3654,9 @@ export default function App() {
   }, [showGameAlert, showGameConfirm])
 
   const handleBlockFriend = useCallback(async (friend: FriendEntry) => {
-    if (isProtectedAccount({ uid: friend.uid, playerId: friend.playerId })) {
-      showGameAlert({ message: '🚫 ناتوانیت ئەم هەژمارە بلۆک بکەیت', tone: 'warn' })
-      return
-    }
     setBlockReasonText('')
     setBlockReasonTarget({ uid: friend.uid, name: friend.name, fromFriend: true })
-  }, [showGameAlert])
+  }, [])
 
   const handleAcceptFriendRequest = useCallback(async (req: IncomingFriendRequest) => {
 
@@ -3783,6 +3784,8 @@ export default function App() {
 
       hiddenFor: [],
 
+      clientTempId: tempId,
+
     }
 
     const preview = text.slice(0, 200)
@@ -3797,7 +3800,11 @@ export default function App() {
 
     logActivity('message', `نامە نێردرا بۆ ${partner.name}`, '✉️')
 
-    void sendPrivateMessage(myUid, myName, partner.uid, partner.name, text, { recipientOnline })
+    void sendPrivateMessage(myUid, myName, partner.uid, partner.name, text, {
+      recipientOnline,
+      clientTempId: tempId,
+      skipBlockCheck: true,
+    })
 
       .catch(err => {
 
@@ -3856,6 +3863,7 @@ export default function App() {
     const looksImage = file.type.startsWith('image/') || /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(file.name || '')
     if (!looksImage) { showGameAlert({ message: '❌ تکایە تەنها فایلی وێنە هەڵبژێرە' }); return }
 
+    // پیشاندانی خێرا بە کوالێتی ڕەسەن — ناگۆڕدرێت بۆ وێنەی پەستراوی تاریک
     const previewUrl = URL.createObjectURL(file)
     dmVoiceLocalUrlsRef.current.add(previewUrl)
     const now = Date.now()
@@ -3891,35 +3899,32 @@ export default function App() {
     setDmMessages(prev => [...prev, optimisticImg].slice(-100))
     setDmThreads(prev => bumpDmThreadPreview(prev, myUid, partner.uid, partner.name, '📷 وێنە', now))
     setDmSendingMedia(true)
-    setProgress(3)
+    setProgress(4)
 
     try {
-
-      // ٠–٢٨٪ پەستاندنی خێرا
+      // پەستاندنی کوالێتی-بەرز (١٦٠٠px / ~١MB)
       const blob = await compressImageToMaxBytes(file, undefined, pct => {
-        setProgress(3 + Math.round(pct * 0.25))
+        setProgress(4 + Math.round(pct * 0.28))
       })
-
-      const compressedUrl = URL.createObjectURL(blob)
-      dmVoiceLocalUrlsRef.current.add(compressedUrl)
-      setDmMessages(prev => prev.map(m => m.id === tempId ? { ...m, mediaUrl: compressedUrl } : m))
-      setProgress(32)
+      setProgress(36)
 
       const threadId = [myUid, partner.uid].sort().join('_')
+      const isGif = (blob.type || '').includes('gif') || /\.gif$/i.test(file.name || '')
+      const contentType = isGif ? 'image/gif' : (blob.type || 'image/jpeg')
+      const fileName = isGif ? 'image.gif' : 'image.jpg'
 
-      // ٣٢–٩٠٪ بارکردن (uploadBytes بۆ وێنەی بچووک)
       let mediaUrl = await uploadDmMediaWithProgress(
         threadId,
-        'image.jpg',
+        fileName,
         blob,
-        'image/jpeg',
-        pct => setProgress(32 + Math.round(pct * 0.58)),
+        contentType,
+        pct => setProgress(36 + Math.round(pct * 0.52)),
       )
 
       if (!mediaUrl) {
-        // داتافایرە / Storage سەرنەکەوت — data URL بۆ وێنەی بچووک
-        if (blob.size > 160_000) throw new Error('وێنەکە زۆر گەورەیە — دوبارە هەوڵبدەرەوە')
-        setProgress(88)
+        // تەنها بۆ وێنەی زۆر بچووک — Storage سەرنەکەوت
+        if (blob.size > 400_000) throw new Error('بارکردنی وێنە سەرنەکەوت — دوبارە هەوڵبدەرەوە')
+        setProgress(90)
         mediaUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader()
           reader.onload = () => resolve(reader.result as string)
@@ -3928,18 +3933,14 @@ export default function App() {
         })
       }
 
-      setProgress(92)
-      const sendPromise = sendPrivateMessage(myUid, myName, partner.uid, partner.name, '', {
+      setProgress(94)
+      await sendPrivateMessage(myUid, myName, partner.uid, partner.name, '', {
         kind: 'image',
         mediaUrl,
         recipientOnline,
         clientTempId: tempId,
+        skipBlockCheck: true,
       })
-      const timed = await Promise.race([
-        sendPromise.then(() => 'ok' as const),
-        new Promise<'timeout'>(resolve => window.setTimeout(() => resolve('timeout'), 20_000)),
-      ])
-      if (timed === 'timeout') throw new Error('ناردنی وێنە زۆر خایاند — دوبارە هەوڵبدەرەوە')
       setProgress(100)
       clearProgress()
 
@@ -3958,7 +3959,7 @@ export default function App() {
 
     }
 
-  }, [activeDmPartner])
+  }, [activeDmPartner, showGameAlert])
 
   const handleSendDmVideo = useCallback(async (file: File) => {
 
@@ -4015,6 +4016,7 @@ export default function App() {
         mediaUrl,
         recipientOnline,
         clientTempId: tempId,
+        skipBlockCheck: true,
       })
 
     } catch (err) {
@@ -4048,75 +4050,115 @@ export default function App() {
     setDmVoiceLevels(Array.from({ length: 28 }, () => 0.12))
   }, [])
 
-  const handleToggleDmVoice = useCallback(async () => {
+  const clearDmVoiceTimers = useCallback(() => {
+    if (dmVoiceMaxTimerRef.current != null) {
+      window.clearTimeout(dmVoiceMaxTimerRef.current)
+      dmVoiceMaxTimerRef.current = null
+    }
+    if (dmVoiceTickRef.current != null) {
+      window.clearInterval(dmVoiceTickRef.current)
+      dmVoiceTickRef.current = null
+    }
+  }, [])
 
-    const myUid = userIdRef.current
+  const resetDmVoiceUi = useCallback(() => {
+    dmVoiceRecordingRef.current = false
+    dmVoiceLockedRef.current = false
+    dmVoicePointerIdRef.current = null
+    dmVoiceStartXYRef.current = null
+    setDmRecording(false)
+    setDmVoiceLocked(false)
+    setDmVoiceCancelArmed(false)
+    setDmVoiceHint('none')
+    setDmVoiceSeconds(0)
+    stopDmVoiceMeter()
+    clearDmVoiceTimers()
+  }, [stopDmVoiceMeter, clearDmVoiceTimers])
 
-    const myName = userProfileRef.current?.name ?? FALLBACK_PROFILE.name
+  const stopDmVoiceTracks = useCallback(() => {
+    const stream = dmVoiceStreamRef.current
+    dmVoiceStreamRef.current = null
+    if (stream) {
+      try { stream.getTracks().forEach(t => t.stop()) } catch { /* ignore */ }
+    }
+  }, [])
 
-    const partner = activeDmPartner
-
-    if (!myUid || !partner) return
-
-    if (dmRecording && dmMediaRecorderRef.current) {
-
-      try {
-
-        if (dmMediaRecorderRef.current.state === 'recording') dmMediaRecorderRef.current.requestData()
-
-      } catch {}
-
-      dmMediaRecorderRef.current.stop()
-
-      setDmRecording(false)
-
-      stopDmVoiceMeter()
-
+  /** وەک واتساپ: action=send → ناردن؛ discard → پەشیمانبوونەوە */
+  const finishDmVoiceRecording = useCallback((action: 'send' | 'discard') => {
+    const recorder = dmMediaRecorderRef.current
+    if (!recorder) {
+      resetDmVoiceUi()
+      stopDmVoiceTracks()
       return
+    }
+    dmVoiceDiscardRef.current = action === 'discard'
+    try {
+      if (recorder.state === 'recording') recorder.requestData()
+    } catch { /* ignore */ }
+    try {
+      if (recorder.state !== 'inactive') recorder.stop()
+    } catch { /* ignore */ }
+    resetDmVoiceUi()
+  }, [resetDmVoiceUi, stopDmVoiceTracks])
 
+  const startDmVoiceRecording = useCallback(async () => {
+    const myUid = userIdRef.current
+    const myName = userProfileRef.current?.name ?? FALLBACK_PROFILE.name
+    const partner = activeDmPartner
+    if (!myUid || !partner || dmVoiceRecordingRef.current) return
+    if (blockedUidsRef.current.has(partner.uid)) {
+      showGameAlert({ message: '🚫 نامە ناردن ڕێگەپێنەدراوە — یەکێکتان بلۆک کراوە' })
+      return
     }
 
     try {
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000,
+        },
+      })
+      dmVoiceStreamRef.current = stream
 
       const mimeCandidates = [
-
         'audio/webm;codecs=opus',
-
         'audio/webm',
-
         'audio/ogg;codecs=opus',
-
         'audio/mp4',
-
       ]
-
       const mime = mimeCandidates.find(t => {
-
         try { return MediaRecorder.isTypeSupported(t) } catch { return false }
-
       }) || ''
 
-      const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
+      const recorderOpts: MediaRecorderOptions = {}
+      if (mime) recorderOpts.mimeType = mime
+      recorderOpts.audioBitsPerSecond = 128_000
+      let recorder: MediaRecorder
+      try {
+        recorder = new MediaRecorder(stream, recorderOpts)
+      } catch {
+        recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
+      }
 
       const partnerUid = partner.uid
-
       const partnerName = partner.name
-
       dmAudioChunksRef.current = []
+      dmVoiceDiscardRef.current = false
+      recorder.ondataavailable = e => {
+        if (e.data && e.data.size > 0) dmAudioChunksRef.current.push(e.data)
+      }
 
-      recorder.ondataavailable = e => { if (e.data && e.data.size > 0) dmAudioChunksRef.current.push(e.data) }
-
-      // شەپۆلی تۆمارکردن (وەک واتساپ)
       try {
         const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
         if (AC) {
           const audioCtx = new AC()
           const source = audioCtx.createMediaStreamSource(stream)
           const analyser = audioCtx.createAnalyser()
-          analyser.fftSize = 64
-          analyser.smoothingTimeConstant = 0.55
+          analyser.fftSize = 128
+          analyser.smoothingTimeConstant = 0.4
           source.connect(analyser)
           dmVoiceAudioCtxRef.current = audioCtx
           dmVoiceAnalyserRef.current = analyser
@@ -4132,7 +4174,7 @@ export default function App() {
               let sum = 0
               for (let j = 0; j < step; j++) sum += data[i * step + j] || 0
               const avg = sum / step / 255
-              next.push(Math.max(0.08, Math.min(1, avg * 1.35)))
+              next.push(Math.max(0.08, Math.min(1, avg * 1.45)))
             }
             setDmVoiceLevels(next)
             dmVoiceRafRef.current = requestAnimationFrame(tick)
@@ -4141,25 +4183,22 @@ export default function App() {
         }
       } catch { /* ignore meter */ }
 
-      recorder.onstop = async () => {
-
+      recorder.onstop = () => {
+        const discard = dmVoiceDiscardRef.current
+        dmVoiceDiscardRef.current = false
         stopDmVoiceMeter()
-
-        stream.getTracks().forEach(t => t.stop())
-
+        stopDmVoiceTracks()
         const chunks = dmAudioChunksRef.current.slice()
-
         dmAudioChunksRef.current = []
-
         dmMediaRecorderRef.current = null
+        clearDmVoiceTimers()
+
+        if (discard) return
 
         const blobType = recorder.mimeType || mime || 'audio/webm'
-
         const blob = new Blob(chunks, { type: blobType })
-
         if (blob.size < 200) return
 
-        // دەستبەجێ پیشاندان + ناردن — بێ خاوی
         const localUrl = URL.createObjectURL(blob)
         dmVoiceLocalUrlsRef.current.add(localUrl)
         const now = Date.now()
@@ -4181,86 +4220,172 @@ export default function App() {
         setDmMessages(prev => [...prev, optimisticAudio].slice(-100))
         setDmThreads(prev => bumpDmThreadPreview(prev, myUid, partnerUid, partnerName, '🎤 نامەی دەنگی', now))
 
-        setDmSendingMedia(true)
-
-        try {
-
-          const threadId = [myUid, partnerUid].sort().join('_')
-
-          const ext = blobType.includes('mp4') ? 'm4a' : blobType.includes('ogg') ? 'ogg' : 'webm'
-
-          let mediaUrl = await uploadDmMedia(threadId, `voice.${ext}`, blob, blobType)
-
-          if (!mediaUrl) {
-
-            if (blob.size > 700_000) throw new Error('دەنگەکە زۆر درێژە')
-
-            mediaUrl = await new Promise<string>((resolve, reject) => {
-
-              const reader = new FileReader()
-
-              reader.onload = () => resolve(reader.result as string)
-
-              reader.onerror = () => reject(new Error('read'))
-
-              reader.readAsDataURL(blob)
-
+        // ناردن لە پاشخان — UI دەستبەجێ
+        void (async () => {
+          try {
+            const threadId = [myUid, partnerUid].sort().join('_')
+            const ext = blobType.includes('mp4') ? 'm4a' : blobType.includes('ogg') ? 'ogg' : 'webm'
+            let mediaUrl = await uploadDmMediaWithProgress(threadId, `voice.${ext}`, blob, blobType)
+            if (!mediaUrl) {
+              if (blob.size > 1_200_000) throw new Error('دەنگەکە زۆر درێژە')
+              mediaUrl = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader()
+                reader.onload = () => resolve(reader.result as string)
+                reader.onerror = () => reject(new Error('read'))
+                reader.readAsDataURL(blob)
+              })
+            }
+            await sendPrivateMessage(myUid, myName, partnerUid, partnerName, '', {
+              kind: 'audio',
+              mediaUrl,
+              recipientOnline,
+              clientTempId: tempId,
+              skipBlockCheck: true,
             })
-
+          } catch (err) {
+            setDmMessages(prev => prev.filter(m => m.id !== tempId))
+            try { URL.revokeObjectURL(localUrl) } catch { /* ignore */ }
+            dmVoiceLocalUrlsRef.current.delete(localUrl)
+            showGameAlert({ message: err instanceof Error ? err.message : '❌ نەتوانرا نامەی دەنگی بنێردرێت' })
           }
-
-          await sendPrivateMessage(myUid, myName, partnerUid, partnerName, '', {
-            kind: 'audio',
-            mediaUrl,
-            recipientOnline,
-            clientTempId: tempId,
-          })
-
-        } catch (err) {
-
-          setDmMessages(prev => prev.filter(m => m.id !== tempId))
-          try { URL.revokeObjectURL(localUrl) } catch { /* ignore */ }
-          dmVoiceLocalUrlsRef.current.delete(localUrl)
-
-          showGameAlert({ message: err instanceof Error ? err.message : '❌ نەتوانرا نامەی دەنگی بنێردرێت' })
-
-        } finally {
-
-          setDmSendingMedia(false)
-
-        }
-
+        })()
       }
 
       dmMediaRecorderRef.current = recorder
-
-      recorder.start(100)
-
+      recorder.start(250)
+      dmVoiceRecordingRef.current = true
+      dmVoiceLockedRef.current = false
       setDmRecording(true)
+      setDmVoiceLocked(false)
+      setDmVoiceCancelArmed(false)
+      setDmVoiceHint('none')
+      setDmVoiceSeconds(0)
 
-      window.setTimeout(() => {
+      const startedAt = Date.now()
+      dmVoiceTickRef.current = window.setInterval(() => {
+        setDmVoiceSeconds(Math.floor((Date.now() - startedAt) / 1000))
+      }, 250)
 
+      // ٦٠ چرکە — وەک سنووری واتساپـی کورتی یاری
+      dmVoiceMaxTimerRef.current = window.setTimeout(() => {
         if (dmMediaRecorderRef.current === recorder && recorder.state === 'recording') {
-
-          try { recorder.requestData() } catch {}
-
-          recorder.stop()
-
-          setDmRecording(false)
-
-          stopDmVoiceMeter()
-
+          finishDmVoiceRecording('send')
         }
+      }, 60_000)
 
-      }, 30000)
-
+      const pending = dmVoicePendingActionRef.current
+      dmVoicePendingActionRef.current = 'none'
+      if (pending === 'discard') {
+        finishDmVoiceRecording('discard')
+      } else if (pending === 'send') {
+        finishDmVoiceRecording('send')
+      }
     } catch {
-
+      dmVoicePendingActionRef.current = 'none'
+      resetDmVoiceUi()
+      stopDmVoiceTracks()
       showGameAlert({ message: '❌ مۆڵەتی مایکرۆفۆن نەدرا' })
+    }
+  }, [activeDmPartner, showGameAlert, stopDmVoiceMeter, stopDmVoiceTracks, clearDmVoiceTimers, resetDmVoiceUi, finishDmVoiceRecording])
 
+  const handleDmVoicePointerDown = useCallback((e: React.PointerEvent) => {
+    if (dmVoiceRecordingRef.current || dmSendingMedia) return
+    e.preventDefault()
+    e.stopPropagation()
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* ignore */ }
+    dmVoicePointerIdRef.current = e.pointerId
+    dmVoiceStartXYRef.current = { x: e.clientX, y: e.clientY }
+    dmVoicePendingActionRef.current = 'none'
+    void startDmVoiceRecording()
+  }, [dmSendingMedia, startDmVoiceRecording])
+
+  const handleDmVoicePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dmVoiceRecordingRef.current || dmVoiceLockedRef.current) return
+    if (dmVoicePointerIdRef.current != null && e.pointerId !== dmVoicePointerIdRef.current) return
+    const start = dmVoiceStartXYRef.current
+    if (!start) return
+    const dx = e.clientX - start.x
+    const dy = e.clientY - start.y
+    // RTL: خلیسکاندن بۆ ڕاست/چەپ بۆ پەشیمانبوونەوە؛ سەرەوە بۆ قفڵ
+    const cancel = Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy)
+    const lock = dy < -56 && Math.abs(dy) > Math.abs(dx)
+    setDmVoiceCancelArmed(cancel)
+    setDmVoiceHint(cancel ? 'cancel' : lock ? 'lock' : 'none')
+  }, [])
+
+  const handleDmVoicePointerUp = useCallback((e: React.PointerEvent) => {
+    if (dmVoicePointerIdRef.current != null && e.pointerId !== dmVoicePointerIdRef.current) return
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId) } catch { /* ignore */ }
+
+    const start = dmVoiceStartXYRef.current
+    const dx = start ? e.clientX - start.x : 0
+    const dy = start ? e.clientY - start.y : 0
+    const cancel = Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy)
+    const lock = dy < -56 && Math.abs(dy) > Math.abs(dx)
+
+    // هێشتا مایک دەستپێنەکراوە — کردار دوای دەستپێکردن
+    if (!dmVoiceRecordingRef.current) {
+      dmVoicePendingActionRef.current = cancel ? 'discard' : (lock ? 'none' : 'send')
+      if (lock) {
+        // قفڵ دوای دەستپێکردن
+        dmVoicePendingActionRef.current = 'none'
+        const waitLock = window.setInterval(() => {
+          if (!dmVoiceRecordingRef.current) return
+          window.clearInterval(waitLock)
+          dmVoiceLockedRef.current = true
+          setDmVoiceLocked(true)
+        }, 40)
+        window.setTimeout(() => window.clearInterval(waitLock), 2000)
+      }
+      return
     }
 
-  }, [activeDmPartner, dmRecording, stopDmVoiceMeter])
+    if (dmVoiceLockedRef.current) return
+
+    if (lock) {
+      dmVoiceLockedRef.current = true
+      setDmVoiceLocked(true)
+      setDmVoiceCancelArmed(false)
+      setDmVoiceHint('none')
+      dmVoicePointerIdRef.current = null
+      return
+    }
+    finishDmVoiceRecording(cancel ? 'discard' : 'send')
+  }, [finishDmVoiceRecording])
+
+  const handleDmVoicePointerCancel = useCallback(() => {
+    if (dmVoiceLockedRef.current) return
+    if (!dmVoiceRecordingRef.current) {
+      dmVoicePendingActionRef.current = 'discard'
+      return
+    }
+    finishDmVoiceRecording('discard')
+  }, [finishDmVoiceRecording])
+
+  const handleDmVoiceLock = useCallback(() => {
+    if (!dmVoiceRecordingRef.current) return
+    dmVoiceLockedRef.current = true
+    setDmVoiceLocked(true)
+    setDmVoiceCancelArmed(false)
+    setDmVoiceHint('none')
+  }, [])
+
+  const handleDmVoiceTrash = useCallback(() => {
+    finishDmVoiceRecording('discard')
+  }, [finishDmVoiceRecording])
+
+  const handleDmVoiceSendLocked = useCallback(() => {
+    finishDmVoiceRecording('send')
+  }, [finishDmVoiceRecording])
+
+  /** کۆنی toggle — کاتێک قفڵ کراوە وەک stop/send */
+  const handleToggleDmVoice = useCallback(() => {
+    if (dmVoiceRecordingRef.current) {
+      finishDmVoiceRecording(dmVoiceLockedRef.current ? 'send' : 'discard')
+      return
+    }
+    void startDmVoiceRecording()
+  }, [finishDmVoiceRecording, startDmVoiceRecording])
 
   const copyPlayerId = useCallback(() => {
 
@@ -4867,6 +4992,11 @@ export default function App() {
       hunterLevel: number
       name: string
       username: string
+      email?: string
+      phone?: string
+      usernameEditUsed?: boolean
+      emailEditUsed?: boolean
+      phoneEditUsed?: boolean
       gender: 'male' | 'female'
       title: string
       avatarUrl: string | null
@@ -4882,29 +5012,39 @@ export default function App() {
       spinLastFreeAtMs?: number | null
       spinSpinsInWindow?: number
       readNotificationIds?: string[]
+      createdAtMs?: number | null
+      giftsSentScore?: number
     }) => {
       const wallet = clampWalletToCap({
         gold: data.gold,
         diamond: data.diamond,
       })
+      const prev = userProfileRef.current ?? FALLBACK_PROFILE
       const profile: UserProfile = {
-        ...(userProfileRef.current ?? FALLBACK_PROFILE),
+        ...prev,
         name: data.name,
-        username: data.username,
+        username: data.username || prev.username || '',
+        email: data.email != null ? data.email : (prev.email || ''),
+        phone: data.phone != null ? data.phone : (prev.phone || ''),
+        usernameEditUsed: data.usernameEditUsed === true,
+        emailEditUsed: data.emailEditUsed === true,
+        phoneEditUsed: data.phoneEditUsed === true,
         gender: data.gender,
         ...wallet,
         isPremium: data.isPremium,
         title: data.title || HUNTER_ROLE_NAME,
         avatarUrl: data.avatarUrl,
         avatar3d: data.avatar3d ?? { ...DEFAULT_AVATAR_3D },
-        playerId: data.playerId ?? userProfileRef.current?.playerId ?? '',
-        settings: data.settings ?? userProfileRef.current?.settings ?? { ...DEFAULT_USER_SETTINGS },
-        stats: data.stats ?? userProfileRef.current?.stats ?? { ...DEFAULT_PLAYER_STATS },
+        playerId: data.playerId ?? prev.playerId ?? '',
+        settings: data.settings ?? prev.settings ?? { ...DEFAULT_USER_SETTINGS },
+        stats: data.stats ?? prev.stats ?? { ...DEFAULT_PLAYER_STATS },
         dropsOpenedByType: data.dropsOpenedByType ?? { ...EMPTY_DROPS_OPENED },
         hunterLevel: data.hunterLevel,
         playerLevel: data.playerLevel,
         playerXp: data.playerXp,
         welcomeBonusGranted: data.welcomeBonusGranted !== false,
+        createdAtMs: data.createdAtMs !== undefined ? data.createdAtMs : (prev.createdAtMs ?? null),
+        giftsSentScore: Math.max(0, Math.floor(Number(data.giftsSentScore ?? prev.giftsSentScore) || 0)),
       }
       userProfileRef.current = profile
       setUserProfile(profile)
@@ -4978,6 +5118,11 @@ export default function App() {
         hunterLevel: data.hunterLevel,
         name: data.name,
         username: data.username,
+        email: profile.email,
+        phone: profile.phone,
+        usernameEditUsed: profile.usernameEditUsed,
+        emailEditUsed: profile.emailEditUsed,
+        phoneEditUsed: profile.phoneEditUsed,
         gender: data.gender,
         title: profile.title,
         avatarUrl: data.avatarUrl,
@@ -4990,6 +5135,8 @@ export default function App() {
         spinLastFreeAtMs: data.spinLastFreeAtMs,
         spinSpinsInWindow: data.spinSpinsInWindow,
         readNotificationIds: data.readNotificationIds,
+        createdAtMs: profile.createdAtMs,
+        giftsSentScore: profile.giftsSentScore,
       })
     }
 
@@ -5018,114 +5165,146 @@ export default function App() {
       safeLocalStorageSet(FACTORY_RESET_FLAG, '1')
       safeLocalStorageSet(ECONOMY_ZERO_RESET_FLAG, '1')
 
-      // سفرکردنەوەی گشتی (جارێک) — ڕۆڵ/لێڤڵ/دراو/پاس بۆ هەمووان
-      try {
-        const wipe = await runGlobalGameplayResetIfNeeded()
-        if (wipe.ran) {
-          console.info('Global gameplay reset applied', wipe)
+      // هەموو کارە قورسەکان لە پاشبنەما — چوونەژوورەوە نابێت چاوەڕوان بێت
+      void (async () => {
+        if (cancelled) return
+
+        let didGlobalWipe = false
+        try {
+          const wipe = await runGlobalGameplayResetIfNeeded()
+          if (wipe.ran) {
+            didGlobalWipe = true
+            console.info('Global gameplay reset applied', wipe)
+          }
+        } catch (err) {
+          console.error('Global gameplay reset failed:', err)
         }
-      } catch (err) {
-        console.error('Global gameplay reset failed:', err)
-      }
-      if (cancelled) return
+        if (cancelled) return
 
-      try { clearLocalPlayerEconomyData(uid) } catch { /* ignore */ }
-      try {
-        const emptyVip = emptyVipPassesState()
-        const emptySeason = emptySeasonPassState()
-        setVipPasses(emptyVip)
-        vipPassesRef.current = emptyVip
-        saveVipPasses(uid, emptyVip)
-        setSeasonPass(emptySeason)
-        seasonPassRef.current = emptySeason
-        saveSeasonPass(uid, emptySeason)
-        npcLiveRef.current = createInitialNpcStates(NPC_COUNT)
-      } catch (err) {
-        console.error('Local wipe after global reset failed:', err)
-      }
+        // تەنها دوای wipeی گشتی — مەسڕەوەی کاش لە هەر چوونەژوورەوەیەک
+        if (didGlobalWipe) {
+          try { clearLocalPlayerEconomyData(uid) } catch { /* ignore */ }
+          try {
+            const emptyVip = emptyVipPassesState()
+            const emptySeason = emptySeasonPassState()
+            setVipPasses(emptyVip)
+            vipPassesRef.current = emptyVip
+            saveVipPasses(uid, emptyVip)
+            setSeasonPass(emptySeason)
+            seasonPassRef.current = emptySeason
+            saveSeasonPass(uid, emptySeason)
+            npcLiveRef.current = createInitialNpcStates(NPC_COUNT)
+          } catch (err) {
+            console.error('Local wipe after global reset failed:', err)
+          }
+        }
 
-      // Firestore is source of truth — fetch/create by Firebase Auth UID (with timeout)
-      const PROFILE_FETCH_MS = 12_000
-      let remote: Awaited<ReturnType<typeof getOrCreateUser>> | null = null
-      try {
-        remote = await Promise.race([
-          getOrCreateUser(uid),
-          new Promise<null>((resolve) => {
-            window.setTimeout(() => resolve(null), PROFILE_FETCH_MS)
-          }),
-        ])
-      } catch (err) {
-        console.error('getOrCreateUser failed:', err)
-        remote = null
-      }
-      if (cancelled) return
+        // subscribeToUser زۆرجار بەسە؛ getOrCreate تەنها ئەگەر کاش نەبوو یان wipe
+        const needProfileFetch = didGlobalWipe || !cached
+        if (needProfileFetch) {
+          const PROFILE_FETCH_MS = 10_000
+          let remote: Awaited<ReturnType<typeof getOrCreateUser>> | null = null
+          try {
+            remote = await Promise.race([
+              getOrCreateUser(uid),
+              new Promise<null>((resolve) => {
+                window.setTimeout(() => resolve(null), PROFILE_FETCH_MS)
+              }),
+            ])
+          } catch (err) {
+            console.error('getOrCreateUser failed:', err)
+            remote = null
+          }
+          if (cancelled) return
 
-      if (remote) {
-        hydrateFromSnapshot(uid, remote)
-        profileHydratedRef.current = true
-        setWallet({
-          gold: remote.gold,
-          diamond: remote.diamond,
-          isPremium: remote.isPremium,
+          if (remote) {
+            hydrateFromSnapshot(uid, remote)
+            profileHydratedRef.current = true
+            setWallet({
+              gold: remote.gold,
+              diamond: remote.diamond,
+              isPremium: remote.isPremium,
+            })
+          } else if (!cached) {
+            console.warn('Firestore profile timed out — continuing with local/fallback state')
+          }
+        }
+
+        ensureLeaderboardEpoch(uid).catch(() => {})
+
+        const npcSeed = npcLiveRef.current.map((n) => {
+          return {
+            uid: n.uid,
+            index: n.index,
+            name: n.name,
+            gender: n.gender,
+            playerLevel: n.playerLevel,
+            playerXp: n.playerXp,
+            hunterLevel: n.hunterLevel,
+            avatarUrl: avatarForGender(n.gender),
+            avatar3d: n.avatar3d,
+            gold: n.gold,
+            diamond: n.diamond,
+            stats: n.stats,
+            dropsOpenedByType: n.dropsOpenedByType,
+            dailyBonusDay: n.dailyBonusDay,
+            dailyBonusLastClaimMs: n.dailyBonusLastClaimMs,
+            spinLastFreeAtMs: n.spinLastFreeAtMs,
+            spinSpinsInWindow: n.spinSpinsInWindow,
+            isOnline: n.isOnline,
+            lastSeenMs: n.lastSeenMs,
+          }
         })
-      } else if (!cached) {
-        console.warn('Firestore profile timed out — continuing with local/fallback state')
-      }
+        upsertNpcLeaderboardPresence(npcSeed).catch((err) => {
+          console.error('NPC leaderboard seed failed:', err)
+        })
 
-      ensureLeaderboardEpoch(uid).catch(() => {})
+        if (cancelled) return
 
-      // Persist fake characters to players/ (merge-only — never zero) in background
-      const npcSeed = npcLiveRef.current.map((n) => {
-        return {
-          uid: n.uid,
-          index: n.index,
-          name: n.name,
-          gender: n.gender,
-          playerLevel: n.playerLevel,
-          playerXp: n.playerXp,
-          hunterLevel: n.hunterLevel,
-          avatarUrl: avatarForGender(n.gender),
-          avatar3d: n.avatar3d,
-          gold: n.gold,
-          diamond: n.diamond,
-          stats: n.stats,
-          dropsOpenedByType: n.dropsOpenedByType,
-          dailyBonusDay: n.dailyBonusDay,
-          dailyBonusLastClaimMs: n.dailyBonusLastClaimMs,
-          spinLastFreeAtMs: n.spinLastFreeAtMs,
-          spinSpinsInWindow: n.spinSpinsInWindow,
-          isOnline: n.isOnline,
-          lastSeenMs: n.lastSeenMs,
+        try {
+          const seedKey = BOT_SEED_STORAGE_KEY
+          if (!safeLocalStorageGet(seedKey)) {
+            void resetMapPresenceAndSeedBots(uid)
+              .then(() => safeLocalStorageSet(seedKey, '1'))
+              .catch((seedErr) => console.error('Bot seed failed:', seedErr))
+          }
+        } catch (seedErr) {
+          console.error('Bot seed failed:', seedErr)
         }
-      })
-      upsertNpcLeaderboardPresence(npcSeed).catch((err) => {
-        console.error('NPC leaderboard seed failed:', err)
-      })
 
-      if (cancelled) return
-
-      // Bot seed — never block first paint
-      try {
-        const seedKey = BOT_SEED_STORAGE_KEY
-        if (!safeLocalStorageGet(seedKey)) {
-          void resetMapPresenceAndSeedBots(uid)
-            .then(() => safeLocalStorageSet(seedKey, '1'))
-            .catch((seedErr) => console.error('Bot seed failed:', seedErr))
-        }
-      } catch (seedErr) {
-        console.error('Bot seed failed:', seedErr)
-      }
-
-      if (cancelled) return
-
-      updateUserMarkerIconRef.current()
+        if (cancelled) return
+        updateUserMarkerIconRef.current()
+      })()
 
     }
+
+    // Optimistic restore — نەخشە/پرۆفایل لە کاش پێش onAuthStateChanged
+    try {
+      const lastUid = typeof localStorage !== 'undefined'
+        ? localStorage.getItem('kd_auth_last_uid')
+        : null
+      const cur = auth.currentUser
+      const optimisticUid = (cur && !cur.isAnonymous) ? cur.uid : lastUid
+      if (optimisticUid) {
+        userIdRef.current = optimisticUid
+        setAuthUserId(optimisticUid)
+        const cachedByUid = loadUserDataLocal(optimisticUid)
+        const cachedByPlayerId = cachedByUid?.playerId
+          ? loadUserDataLocal(cachedByUid.playerId)
+          : null
+        const cached = cachedByPlayerId ?? cachedByUid
+        if (cached) {
+          hydrateFromSnapshot(optimisticUid, cached)
+          profileHydratedRef.current = true
+        }
+        setAuthLoading(false)
+      }
+    } catch { /* ignore */ }
 
     // If Firebase Auth is slow/blocked, still reveal AuthModal instead of infinite «بارکردن»
     const authSafetyTimer = window.setTimeout(() => {
       if (!cancelled) setAuthLoading(false)
-    }, 4000)
+    }, 2000)
 
     const unsub = onAuthReady(async (user) => {
 
@@ -5134,7 +5313,11 @@ export default function App() {
       if (user && !user.isAnonymous) {
 
         try {
-
+          try {
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem('kd_auth_last_uid', user.uid)
+            }
+          } catch { /* ignore */ }
           await bootstrapAuthenticatedUser(user.uid)
 
         } catch (err) {
@@ -5167,6 +5350,7 @@ export default function App() {
 
         setAuthUserId(null)
         profileHydratedRef.current = false
+        try { clearAuthSessionHints() } catch { /* ignore */ }
 
         setAuthLoading(false)
 
@@ -5204,7 +5388,7 @@ export default function App() {
     setChestVolume(local.chestVolume ?? 1)
     setMusicEnabled(false)
     setMusicVolume(local.musicVolume ?? 0.5)
-    setHideWhenOffline(local.hideWhenOffline !== false)
+    setHideWhenOffline(local.hideWhenOffline === true)
     setHideBlockedUsers(local.hideBlockedUsers === true)
     setHideGlobalChat(local.hideGlobalChat === true)
     setAllowDmWithoutFriendship(local.allowDmWithoutFriendship !== false)
@@ -5478,7 +5662,7 @@ export default function App() {
         setChestVolume(data.settings.chestVolume ?? 1)
         setMusicEnabled(false)
         setMusicVolume(data.settings.musicVolume ?? 0.5)
-        setHideWhenOffline(data.settings.hideWhenOffline !== false)
+        setHideWhenOffline(data.settings.hideWhenOffline === true)
         setHideBlockedUsers(data.settings.hideBlockedUsers === true)
         setHideGlobalChat(data.settings.hideGlobalChat === true)
         setAllowDmWithoutFriendship(data.settings.allowDmWithoutFriendship !== false)
@@ -5697,9 +5881,10 @@ export default function App() {
 
     if (!authUserId || !activeDmPartner) { setDmMessages([]); return }
 
-    // کردنەوەی چات — unread دەسڕێتەوە و نامەکان دەکات بە بینرا
+    // کردنەوەی چات — unread دەسڕێتەوە (بێ سکانکردنی هەموو مێژوو)
+    markDmThreadRead(authUserId, activeDmPartner.uid, []).catch(() => {})
 
-    markDmThreadRead(authUserId, activeDmPartner.uid).catch(() => {})
+    let lastSeenMarkAt = 0
 
     return subscribeToDmThread(authUserId, activeDmPartner.uid, msgs => {
 
@@ -5729,23 +5914,25 @@ export default function App() {
 
       })
 
-      // هەر نامەی نوێ لە کاتی بینینی چات — دەستبەجێ بخوێنەرەوە (بێ ئاگاداری/unread)
-      markDmThreadRead(authUserId, activeDmPartner.uid).catch(() => {})
-
-      const undelivered = msgs
-
-        .filter(m => m.from !== authUserId && m.status === 'sent')
-
+      const unseenIds = msgs
+        .filter(m => m.from !== authUserId && m.status !== 'seen' && !isOptimisticDmId(m.id))
         .map(m => m.id)
 
+      const now = Date.now()
+      // debounce — هەر نامەیەک نەبێتە writeی جیا
+      if (unseenIds.length && now - lastSeenMarkAt > 400) {
+        lastSeenMarkAt = now
+        markDmThreadRead(authUserId, activeDmPartner.uid, unseenIds).catch(() => {})
+      }
+
+      const undelivered = msgs
+        .filter(m => m.from !== authUserId && m.status === 'sent')
+        .map(m => m.id)
         .filter(id => !dmDeliveredMarkRef.current.has(id))
 
       if (undelivered.length) {
-
         undelivered.forEach(id => dmDeliveredMarkRef.current.add(id))
-
         markIncomingDmDelivered(authUserId, activeDmPartner.uid, undelivered).catch(() => {})
-
       }
 
     })
@@ -5762,7 +5949,7 @@ export default function App() {
 
       try {
 
-        dmChatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+        dmChatEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
 
       } catch {}
 
@@ -5777,10 +5964,6 @@ export default function App() {
     }
 
     requestAnimationFrame(scrollToLatest)
-
-    const t = window.setTimeout(scrollToLatest, 80)
-
-    return () => window.clearTimeout(t)
 
   }, [activeDmPartner, dmMessages, showMessagesPanel])
 
@@ -6279,9 +6462,10 @@ export default function App() {
     try {
       if (uid) {
         appendActivity(uid, 'logout', 'دەرچوون لە یاری', '🚪')
-        await setPlayerOffline(uid)
+        await setPlayerOffline(uid, { hideFromMap: hideWhenOfflineRef.current })
       }
       realtimeSync.disconnect()
+      try { clearAuthSessionHints() } catch { /* ignore */ }
       await signOutUser()
     } catch (err) {
       console.error('Logout failed:', err)
@@ -6474,9 +6658,12 @@ export default function App() {
 
     if (uid) syncUserSettings(uid, { showOtherPlayers: next }).catch(() => {})
 
+    // نەخشە لە frameی داهاتوو نوێ دەبێتەوە — تۆگڵ خاو نابێت
+    window.requestAnimationFrame(() => bumpMapPlayersTick())
+
     logActivity('settings', next ? 'پیشاندانی کەسایەتییەکانی تر چالاک کرا' : 'وونکردنی کەسایەتی تر چالاک کرا', '👥')
 
-  }, [logActivity])
+  }, [logActivity, bumpMapPlayersTick])
 
   const handleToggleShowMyAvatarOnMap = useCallback((next: boolean) => {
 
@@ -6488,11 +6675,13 @@ export default function App() {
 
     if (uid) syncUserSettings(uid, { showMyAvatarOnMap: next }).catch(() => {})
 
-    pushLocationToFirestore(userLatRef.current, userLngRef.current, true)
+    // UI یەکسەر؛ کارە قورسەکانی نەخشە لە frameی داهاتوو
+    window.requestAnimationFrame(() => {
+      updateUserMarkerIcon()
+      pushLocationToFirestore(userLatRef.current, userLngRef.current, true)
+    })
 
-    updateUserMarkerIcon()
-
-    logActivity('settings', next ? 'پیشاندانی ئەڤاتارەکەم چالاک کرا' : 'پیشاندانی ئەڤاتارەکەم ناچاڵاک کرا', '🧍')
+    logActivity('settings', next ? 'پیشاندانی کەسایەتم لەسەر نەخشە چالاک کرا' : 'پیشاندانی کەسایەتم لەسەر نەخشە ناچاڵاک کرا', '🧍')
 
   }, [pushLocationToFirestore, updateUserMarkerIcon, logActivity])
 
@@ -6847,7 +7036,7 @@ export default function App() {
 
     if (el) {
 
-      el.style.transition = `all 0.32s ${IOS_SHEET_EASE}`;
+      el.style.transition = `all 0.18s ${IOS_SHEET_EASE}`;
 
       el.style.maxHeight = '0px';
 
@@ -6865,7 +7054,7 @@ export default function App() {
 
         setActiveSheet(prev => (prev === 'playerInfo' ? prev : null));
 
-      }, 320);
+      }, 180);
 
     } else {
 
@@ -6974,7 +7163,7 @@ export default function App() {
     const distM = calcDistance(userLatRef.current, userLngRef.current, airdrop.lat, airdrop.lng)
     if (distM > DROP_AR_MAX_M) {
       if (mapRef.current) {
-        try { mapRef.current.flyTo([airdrop.lat, airdrop.lng], 18, { animate: true, duration: 1.2 }) } catch {}
+        try { mapRef.current.flyTo([airdrop.lat, airdrop.lng], 18, { animate: true, duration: 0.45 }) } catch {}
       }
       const meters = Math.max(1, Math.round(distM))
       showGameAlert({
@@ -7950,7 +8139,7 @@ export default function App() {
 
         if (followPlaneRef.current && nowPerf - planeCamThrottleRef.current > 400) {
           planeCamThrottleRef.current = nowPerf
-          try { map2.panTo([state.lat, state.lng], { animate: true, duration: 0.4 }) } catch {}
+          try { map2.panTo([state.lat, state.lng], { animate: true, duration: 0.22 }) } catch {}
         }
 
         if (mobileCool) {
@@ -8719,8 +8908,8 @@ export default function App() {
       const host = document.getElementById('leaflet-map')
       if (!host) {
         // DOM may lag one frame behind authUserId — retry briefly
-        if (retries++ < 80) {
-          retryTimer = setTimeout(initMap, 50)
+        if (retries++ < 40) {
+          retryTimer = setTimeout(initMap, 16)
         } else {
           console.error('Map init failed: #leaflet-map never appeared')
         }
@@ -8735,7 +8924,22 @@ export default function App() {
 
       let created: L.Map
       try {
-        created = L.map(host, { zoomControl: false, attributionControl: false, minZoom: 2, maxZoom: 19, trackResize: true }).setView([startLat, startLng], 14)
+        created = L.map(host, {
+          zoomControl: false,
+          attributionControl: false,
+          minZoom: 2,
+          maxZoom: 19,
+          trackResize: true,
+          zoomAnimation: true,
+          fadeAnimation: false,
+          markerZoomAnimation: true,
+          inertia: true,
+          inertiaDeceleration: 2800,
+          easeLinearity: 0.2,
+          wheelPxPerZoomLevel: 70,
+          zoomSnap: 0.5,
+          zoomDelta: 0.5,
+        }).setView([startLat, startLng], 14)
       } catch (err) {
         console.error('Map init failed:', err)
         return
@@ -8750,6 +8954,8 @@ export default function App() {
       host.style.height = '100%'
       host.style.minHeight = '100dvh'
       mapRef.current = map
+      // یاری دەستبەجێ — مەچاوەڕوانە whenReady بۆ GPS/socket
+      setMapReady(true)
 
       // Player-related popups/tooltips must not pan the map (scrambles the tap target)
       try { L.Popup.mergeOptions({ autoPan: false }) } catch {}
@@ -8775,8 +8981,8 @@ export default function App() {
 
       // Mount + delayed passes fill 100% after first paint / safe-area settle
       mountRaf = requestAnimationFrame(bumpSize)
-      mountT100 = setTimeout(bumpSize, 100)
-      mountT300 = setTimeout(bumpSize, 300)
+      mountT100 = setTimeout(bumpSize, 60)
+      mountT300 = setTimeout(bumpSize, 180)
 
       mapZoomRef.current = map.getZoom()
 
@@ -8801,7 +9007,6 @@ export default function App() {
 
       map.whenReady(() => {
         if (disposed) return
-        setMapReady(true)
         // سەرەتای یاری — کلیکی کارەکتەر دەستبەجێ کار بکات (بێ GPS settle block)
         mapGestureRef.current.blockedUntil = 0
         mapGestureRef.current.userMapGesture = false
@@ -8817,7 +9022,7 @@ export default function App() {
             map.fire('moveend')
           } catch {}
           mapGestureRef.current.blockedUntil = 0
-        }, 300)
+        }, 160)
       })
     }
 
@@ -8839,8 +9044,8 @@ export default function App() {
       try { map.invalidateSize({ animate: false }) } catch (err) { console.error('Post-auth map resize failed:', err) }
     }
     const raf = requestAnimationFrame(invalidate)
-    const t120 = setTimeout(invalidate, 120)
-    const t420 = setTimeout(invalidate, 420)
+    const t120 = setTimeout(invalidate, 80)
+    const t420 = setTimeout(invalidate, 220)
     let ro: ResizeObserver | null = null
     if (host && typeof ResizeObserver !== 'undefined') {
       ro = new ResizeObserver(() => invalidate())
@@ -10332,9 +10537,10 @@ export default function App() {
       if (!visible) {
         if (raf) window.cancelAnimationFrame(raf)
         raf = 0
-        if (hideWhenOfflineRef.current) {
-          const uid = userIdRef.current
-          if (uid) setPlayerOffline(uid).catch(() => {})
+        const uid = userIdRef.current
+        if (uid) {
+          // ئۆفلاین تۆمار بکە؛ تەنها ئەگەر «وونم بکە» چالاک بێت ئەڤاتار بشارەوە
+          setPlayerOffline(uid, { hideFromMap: hideWhenOfflineRef.current }).catch(() => {})
         }
         return
       }
@@ -10501,9 +10707,9 @@ export default function App() {
 
       const uid = userIdRef.current
 
-      // شوێنی دوایین دەمێنێتەوە — تەنها دۆخی ئۆفلاین تۆمار دەکرێت
+      // شوێنی دوایین دەمێنێتەوە؛ ئەگەر «وونم بکە» ناچاڵاک بێت ئەڤاتار لەسەر نەخشە دەمێنێتەوە
 
-      if (uid) setPlayerOffline(uid).catch(() => {})
+      if (uid) setPlayerOffline(uid, { hideFromMap: hideWhenOfflineRef.current }).catch(() => {})
 
     }
 
@@ -10768,7 +10974,7 @@ export default function App() {
 
       if (opts?.animated) {
 
-        playerPanelRef.current.style.transition = `transform 0.52s ${IOS_SPRING_EASE}`
+        playerPanelRef.current.style.transition = `transform 0.22s ${IOS_SPRING_EASE}`
 
         playerPanelRef.current.style.transform = 'translateY(110%)'
 
@@ -11344,11 +11550,6 @@ export default function App() {
 
       return
 
-    }
-
-    if (isProtectedAccount({ uid: targetUid, playerId: target.playerId })) {
-      showGameAlert({ message: '🚫 ناتوانیت دیاری بۆ ئەم هەژمارە بنێریت', tone: 'warn' })
-      return
     }
 
     if (!isNpcPlayerUid(targetUid) && !isBotPlayerUid(targetUid)) {
@@ -12079,11 +12280,6 @@ export default function App() {
 
       if (!id || !beginOpen(`p:${id}`)) return
 
-      const locEarly = onlinePlayersRef.current.get(id)
-      if (isProtectedAccount({ uid: id, playerId: locEarly?.playerId })) {
-        return
-      }
-
       dismissAllOverlaysRef.current('player')
 
       const loc = onlinePlayersRef.current.get(id)
@@ -12138,7 +12334,10 @@ export default function App() {
 
         avatar3d: safeAvatar3d,
 
-        hunterLevel: Math.max(0, Math.floor(Number(npcLive?.hunterLevel ?? loc?.hunterLevel) || 0)),
+        hunterLevel: resolveHunterLevel(
+          npcLive?.hunterLevel ?? loc?.hunterLevel,
+          npcLive?.dropsOpenedByType,
+        ),
 
         dropsOpenedByType: npcLive
           ? { ...npcLive.dropsOpenedByType }
@@ -12192,13 +12391,15 @@ export default function App() {
               isPremium: Boolean(profile.isPremium),
               avatarUrl: typeof profile.avatarUrl === 'string' && profile.avatarUrl ? profile.avatarUrl : prev.avatarUrl,
               avatar3d: nextAvatar3d,
-              hunterLevel: Math.max(
-                0,
-                Math.floor(Number(npc?.hunterLevel ?? profile.hunterLevel ?? prev.hunterLevel) || 0),
-              ),
               dropsOpenedByType: npc
                 ? { ...npc.dropsOpenedByType }
                 : parseDropsOpenedByType(profile.dropsOpenedByType ?? prev.dropsOpenedByType),
+              hunterLevel: resolveHunterLevel(
+                npc?.hunterLevel ?? profile.hunterLevel ?? prev.hunterLevel,
+                npc
+                  ? npc.dropsOpenedByType
+                  : parseDropsOpenedByType(profile.dropsOpenedByType ?? prev.dropsOpenedByType),
+              ),
               stats: npc
                 ? { ...DEFAULT_PLAYER_STATS, ...npc.stats }
                 : (profile.stats ? { ...DEFAULT_PLAYER_STATS, ...profile.stats } : prev.stats),
@@ -12225,9 +12426,12 @@ export default function App() {
 
             avatar3d: nextAvatar3d,
 
-            hunterLevel: Math.max(0, Math.floor(Number(profile.hunterLevel) || prev.hunterLevel || 0)),
-
             dropsOpenedByType: parseDropsOpenedByType(profile.dropsOpenedByType ?? prev.dropsOpenedByType),
+
+            hunterLevel: resolveHunterLevel(
+              profile.hunterLevel ?? prev.hunterLevel,
+              parseDropsOpenedByType(profile.dropsOpenedByType ?? prev.dropsOpenedByType),
+            ),
 
             stats: profile.stats ? { ...DEFAULT_PLAYER_STATS, ...profile.stats } : prev.stats,
 
@@ -12291,9 +12495,12 @@ export default function App() {
 
         avatar3d: normalizeAvatar3d(profile.avatar3d),
 
-        hunterLevel: profile.hunterLevel ?? 0,
-
         dropsOpenedByType: profile.dropsOpenedByType ?? { ...EMPTY_DROPS_OPENED },
+
+        hunterLevel: resolveHunterLevel(
+          profile.hunterLevel,
+          profile.dropsOpenedByType ?? EMPTY_DROPS_OPENED,
+        ),
 
         skinId: cos.skinId,
 
@@ -12680,11 +12887,11 @@ export default function App() {
 
       applyGpsPosition(pos.coords.latitude, pos.coords.longitude, true, true)
 
-      try { mapRef.current?.flyTo([pos.coords.latitude, pos.coords.longitude], 17, { animate: true, duration: 1.5 }) } catch {}
+      try { mapRef.current?.flyTo([pos.coords.latitude, pos.coords.longitude], 17, { animate: true, duration: 0.5 }) } catch {}
 
     }, () => {
 
-      try { mapRef.current?.flyTo([userLatRef.current, userLngRef.current], 15, { animate: true, duration: 1.5 }) } catch {}
+      try { mapRef.current?.flyTo([userLatRef.current, userLngRef.current], 15, { animate: true, duration: 0.5 }) } catch {}
 
       showGameAlert({ message: 'ناتوانرێت شوێنەکەت بدۆزرێتەوە!' })
 
@@ -12924,7 +13131,18 @@ export default function App() {
     dmMediaRecorderRef,
     dmMessages,
     dmRecording,
+    dmVoiceLocked,
+    dmVoiceCancelArmed,
+    dmVoiceSeconds,
+    dmVoiceHint,
     dmVoiceLevels,
+    handleDmVoicePointerDown,
+    handleDmVoicePointerMove,
+    handleDmVoicePointerUp,
+    handleDmVoicePointerCancel,
+    handleDmVoiceLock,
+    handleDmVoiceTrash,
+    handleDmVoiceSendLocked,
     dmSelectedIds,
     dmSendingMedia,
     dmMediaProgress,
@@ -13152,6 +13370,7 @@ export default function App() {
     playerLevelNum,
     playerMarkersGroupRef,
     playerName,
+    playerFullName,
     playerPanelDragRef,
     playerPanelRef,
     playerSheetAnimIn,

@@ -8,7 +8,7 @@ import {
   registerAccount,
   sendResetEmail,
 } from '../services/authService'
-import { validatePhoneNumber, validateUsername } from '../services/userService'
+import { validatePhoneNumber, validateUsername, type Gender } from '../services/userService'
 import gameLogo from '../imports/logo.png'
 import {
   TERMS_FOOTER,
@@ -235,6 +235,40 @@ const AUTH_CSS = `
     place-items: center;
   }
   .kd-auth-eye .material-icons { font-size: 18px; }
+
+  .kd-auth-gender {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .kd-auth-gender-btn {
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 14px;
+    background: rgba(4, 10, 20, 0.42);
+    color: #cbd5e1;
+    padding: 12px 10px;
+    font-size: 13px;
+    font-weight: 900;
+    font-family: inherit;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  .kd-auth-gender-btn.is-active {
+    border-color: rgba(0,240,255,0.65);
+    background: rgba(0,240,255,0.12);
+    color: #e0f2fe;
+    box-shadow: 0 0 0 2px rgba(0,240,255,0.12);
+  }
+  .kd-auth-gender-label {
+    font-size: 11px;
+    font-weight: 800;
+    color: rgba(148,163,184,0.9);
+    margin: 2px 2px 0;
+  }
 
   .kd-auth-submit {
     width: 100%;
@@ -468,6 +502,7 @@ export default function AuthModal() {
   const [regPw, setRegPw] = useState('')
   const [regPw2, setRegPw2] = useState('')
   const [showRegPw, setShowRegPw] = useState(false)
+  const [regGender, setRegGender] = useState<Gender | null>(null)
   const [termsOk, setTermsOk] = useState(false)
 
   const [resetEmail, setResetEmail] = useState('')
@@ -511,6 +546,10 @@ export default function AuthModal() {
       setError('خانەکان پڕ بکەرەوە.')
       return
     }
+    if (regGender !== 'male' && regGender !== 'female') {
+      setError('ڕەگەز دیاری بکە (نێر یان مێ).')
+      return
+    }
     const userErr = validateUsername(username)
     if (userErr) { setError(userErr); return }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(regEmail.trim())) {
@@ -533,7 +572,14 @@ export default function AuthModal() {
     }
     setBusy(true)
     try {
-      await registerAccount({ fullName, username, email: regEmail, phone: regPhone, password: regPw })
+      await registerAccount({
+        fullName,
+        username,
+        email: regEmail,
+        phone: regPhone,
+        password: regPw,
+        gender: regGender,
+      })
     } catch (err) {
       setError(mapFirebaseAuthError(err))
     } finally {
@@ -748,6 +794,27 @@ export default function AuthModal() {
                   autoComplete="tel"
                   aria-label="ژمارەی مۆبایل"
                 />
+                <div className="kd-auth-gender-label">ڕەگەز دیاری بکە</div>
+                <div className="kd-auth-gender" role="group" aria-label="ڕەگەز">
+                  <button
+                    type="button"
+                    className={`kd-auth-gender-btn${regGender === 'male' ? ' is-active' : ''}`}
+                    aria-pressed={regGender === 'male'}
+                    onClick={() => setRegGender('male')}
+                  >
+                    <span aria-hidden="true">♂</span>
+                    نێر
+                  </button>
+                  <button
+                    type="button"
+                    className={`kd-auth-gender-btn${regGender === 'female' ? ' is-active' : ''}`}
+                    aria-pressed={regGender === 'female'}
+                    onClick={() => setRegGender('female')}
+                  >
+                    <span aria-hidden="true">♀</span>
+                    مێ
+                  </button>
+                </div>
                 <div className="kd-auth-input-wrap">
                   <input
                     className="kd-auth-input has-toggle"

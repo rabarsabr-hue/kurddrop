@@ -7,9 +7,9 @@ import type { Gender } from '../services/userService'
 
 export const BOT_UID_PREFIX = 'kd_bot_'
 /** Bump when bot docs need a full rewrite with safer defaults */
-export const BOT_SEED_VERSION = 12
+export const BOT_SEED_VERSION = 13
 /** localStorage key — bump alongside BOT_SEED_VERSION so clients re-seed once */
-export const BOT_SEED_STORAGE_KEY = 'kd_city_bots_seed_v12'
+export const BOT_SEED_STORAGE_KEY = 'kd_city_bots_seed_v13'
 /** تەنها ٢٠ بۆت لەناو هەولێر */
 export const BOTS_PER_CITY = 20
 export const BOT_TOTAL = 20
