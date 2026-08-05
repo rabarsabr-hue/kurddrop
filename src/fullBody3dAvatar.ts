@@ -1,12 +1,13 @@
 /**
- * Full-Body Realistic Static 3D Human Avatars — lightweight SVG standing figures for Leaflet markers.
+ * Full-Body Realistic 3D Human Avatars — lightweight SVG standing figures for Leaflet markers.
  * Transparent background only; neon ground ring; male/female silhouettes; zoom-scaled markers.
  * No three.js: SVG/CSS only so dozens of markers stay cheap.
  *
- * Pose is STATIC only (natural standing). Movement / walk / idle systems will come later from the shop.
+ * Pose: static by default; walk / social motions via CSS classes from the map motion shop.
  */
 
 import type { CosmeticDef } from './cosmetics'
+import { USE_GLB_MAP_AVATARS, buildGlbMapAvatarHtml } from './glb/mapGlbAvatarSystem'
 
 /** Set false to restore previous avatars (bust 3D / classic via useRealistic3DAvatar). */
 export const USE_FULL_BODY_3D_AVATAR = true
@@ -16,11 +17,37 @@ export const useFullBody3DAvatar = USE_FULL_BODY_3D_AVATAR
 
 export type FullBodyAvatarGender = 'male' | 'female'
 
-/**
- * @deprecated Motion modes are disabled — avatars stay in a realistic static standing pose.
- * Movement systems will come later from the shop. Kept for API compatibility.
- */
-export type FullBodyMotion = 'idle' | 'walk' | 'gentle' | 'static'
+/** Idle / walk / scripted social motion class suffix (kd-fb3d--*). */
+export type FullBodyMotion =
+  | 'idle'
+  | 'walk'
+  | 'gentle'
+  | 'static'
+  | 'stand_breathe'
+  | 'nervous'
+  | 'kneel'
+  | 'ring_pocket'
+  | 'offer_ring'
+  | 'shock'
+  | 'kiss'
+  | 'kiss_l'
+  | 'kiss_r'
+  | 'hug'
+  | 'slap'
+  | 'punch'
+  | 'kick'
+  | 'wave'
+  | 'bow'
+  | 'dance'
+  | 'highfive'
+  | 'laugh'
+  | 'shy'
+  | 'hug_recv'
+  | 'recoil'
+  | 'fall'
+  | 'hold_leg'
+  | 'propose'
+  | 'dizzy'
 
 /** Studio / persisted 3D look — also mirrored on public location presence. */
 export type Avatar3DHairStyle = 'buzz' | 'short' | 'layered' | 'long'
@@ -448,6 +475,7 @@ function buildMaleFigure(
     <path fill="url(#${ids.skinG})" d="M44.5 40.5 C46.5 36.8, 53.5 36.8, 55.5 40.5 L54.2 53.5 C52 56.5, 48 56.5, 45.8 53.5 Z"/>
     <ellipse cx="50" cy="48" rx="3.2" ry="2" fill="${skin.shadow}" opacity="0.18"/>
 
+    <g class="kd-fb3d-head" style="transform-origin:50px 40px;transform-box:view-box;">
     <!-- hair back / sides -->
     ${hairParts.back}
 
@@ -482,6 +510,7 @@ function buildMaleFigure(
 
     <!-- hair front / crown -->
     ${hairParts.front}
+    </g>
 
     <!-- soft figure shade (body only) -->
     <ellipse cx="58" cy="90" rx="10" ry="28" fill="url(#${ids.bodyShade})" opacity="0.35"/>
@@ -577,6 +606,7 @@ function buildFemaleFigure(
     <path fill="url(#${ids.skinG})" d="M45.5 38.5 C47 35.5, 53 35.5, 54.5 38.5 L53.5 51.5 C51.8 54.2, 48.2 54.2, 46.5 51.5 Z"/>
     <ellipse cx="50" cy="46" rx="2.6" ry="1.6" fill="${skin.shadow}" opacity="0.14"/>
 
+    <g class="kd-fb3d-head" style="transform-origin:50px 38px;transform-box:view-box;">
     <!-- hair back -->
     ${hairParts.back}
 
@@ -611,6 +641,7 @@ function buildFemaleFigure(
 
     <!-- hair front / bangs -->
     ${hairParts.front}
+    </g>
 
     <!-- soft figure shade (body only) -->
     <ellipse cx="57" cy="88" rx="9" ry="26" fill="url(#${ids.bodyShade})" opacity="0.32"/>
@@ -741,9 +772,24 @@ function renderFullBodySvgCore(opts: {
   return { svgInner, gender: look.gender }
 }
 
+function resolveFullBodyMotionClass(opts: {
+  isMoving?: boolean | null
+  motion?: FullBodyMotion | string | null
+}): string {
+  const raw = typeof opts.motion === 'string' ? opts.motion.trim() : ''
+  if (raw && raw !== 'static' && raw !== 'idle' && raw !== 'gentle') {
+    return `kd-fb3d--${raw}`
+  }
+  if (opts.isMoving) return 'kd-fb3d--walk'
+  // مرۆڤئاسا: هەمیشە هەناسە لە idle (نەک static وەک پەیکەر)
+  if (raw === 'gentle') return 'kd-fb3d--gentle'
+  if (raw === 'static') return 'kd-fb3d--stand_breathe'
+  return 'kd-fb3d--stand_breathe'
+}
+
 /**
  * Full-body standing figure (head→feet). Transparent SVG — no ground neon ring.
- * Static realistic pose only; walk/idle animations removed — shop movement systems later.
+ * Supports walk + social motion CSS classes from the map motion shop.
  */
 export function buildFullBody3DHumanHtml(opts: {
   avatarUrl?: string
@@ -752,12 +798,23 @@ export function buildFullBody3DHumanHtml(opts: {
   sizePx?: number
   gender?: FullBodyAvatarGender | null
   seed?: string
-  /** Ignored — pose is always static. Kept for API compatibility; movement systems come later from the shop. */
   isMoving?: boolean | null
+  /** Explicit pose: walk / kiss / punch / … */
+  motion?: FullBodyMotion | string | null
   avatar3d?: Avatar3DCustomization | null
   /** Studio smart-camera: head close-up vs full body (CSS/SVG framing). */
   viewMode?: Avatar3DViewMode
 }): string {
+  // Map markers: Mixamo GLB/GLTF characters (male/female)
+  if (USE_GLB_MAP_AVATARS && opts.viewMode !== 'head') {
+    return buildGlbMapAvatarHtml({
+      sizePx: opts.sizePx,
+      gender: opts.gender,
+      isMoving: opts.isMoving,
+      motion: opts.motion,
+    })
+  }
+
   const width = opts.sizePx ?? FULL_BODY_MARKER_WIDTH
   const height = Math.round(width * (FULL_BODY_MARKER_HEIGHT / FULL_BODY_MARKER_WIDTH))
   const viewMode: Avatar3DViewMode = opts.viewMode === 'head' ? 'head' : 'full'
@@ -767,8 +824,9 @@ export function buildFullBody3DHumanHtml(opts: {
     viewMode,
     showRing: false,
   })
+  const motionClass = resolveFullBodyMotionClass(opts)
 
-  return `<div class="kd-fb3d-avatar kd-fb3d--static kd-fb3d--${gender} kd-fb3d--view-${viewMode}" style="width:${width}px;height:${boxH}px;position:relative;overflow:visible;pointer-events:auto;background:transparent;transition:transform 0.35s cubic-bezier(0.16,1,0.3,1);">
+  return `<div class="kd-fb3d-avatar ${motionClass} kd-fb3d--${gender} kd-fb3d--view-${viewMode}" style="width:${width}px;height:${boxH}px;position:relative;overflow:visible;pointer-events:auto;background:transparent;transition:transform 0.35s cubic-bezier(0.16,1,0.3,1);">
   ${svgInner}
 </div>`
 }

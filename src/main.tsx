@@ -102,6 +102,11 @@ if (!rootEl) {
 } else {
   const root = createRoot(rootEl)
 
+  // دەستپێکردنی پێشبارکردنی کارەکتەرەکان پێش App — نەخشە خێراتر پڕ دەبێت
+  const characterPreload = import('./glb/mapGlbAvatarSystem')
+    .then((m) => m.preloadCharacterTemplates())
+    .catch((err) => console.warn('Character preload skipped:', err))
+
   // Dynamic import: broken App module → dark error UI (never blank white)
   void import('./App.tsx')
     .then(async (mod) => {
@@ -111,6 +116,9 @@ if (!rootEl) {
       } catch (err) {
         console.warn('Currency preload skipped:', err)
       }
+
+      // چاوەڕێی پێشبارکردن مەکە بۆ ڕێندەر — لە پاشخان درێژە بکێشێت
+      void characterPreload
 
       const App = mod.default
       if (typeof App !== 'function') {

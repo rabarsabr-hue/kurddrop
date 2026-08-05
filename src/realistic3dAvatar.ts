@@ -23,6 +23,8 @@ export {
   buildHeadShotAvatarHtml,
 }
 
+export { USE_RIVE_MAP_AVATAR } from './rive/mapAvatarRuntime'
+
 export type { Avatar3DCustomization, Avatar3DViewMode }
 
 /** Toggle false to restore classic avatars (when full-body is also off). */
@@ -314,8 +316,8 @@ export function buildMapAvatarInnerHtml(opts: {
   sizePx?: number
   gender?: AvatarGender | null
   seed?: string
-  /** Ignored for full-body (static pose). Kept for API compatibility. */
   isMoving?: boolean | null
+  motion?: string | null
   avatar3d?: Avatar3DCustomization | null
   viewMode?: Avatar3DViewMode
 }): string {

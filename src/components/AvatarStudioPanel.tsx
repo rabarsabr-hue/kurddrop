@@ -1,4 +1,4 @@
-/** دەستکاریکردنی کەسایەتی — ستودیۆی ئاڤاتاری ٣د */
+/** دەستکاریکردنی کەسایەتی — ستودیۆی ئاڤاتاری ٣د + مۆدێلی GLB */
 import type { ReactNode } from 'react'
 import type { Avatar3DCustomization, Avatar3DHairStyle, Avatar3DViewMode } from '../fullBody3dAvatar'
 import {
@@ -9,7 +9,7 @@ import {
   HAIR_PALETTE,
 } from '../fullBody3dAvatar'
 import { HAIR_STYLE_LABELS_KU } from '../appHelpers'
-import { Realistic3DAvatarDisc } from './Realistic3DAvatar'
+import { GlbCharacterViewer } from './GlbCharacterViewer'
 import type { Gender } from '../services/userService'
 
 type Props = {
@@ -20,6 +20,7 @@ type Props = {
   avatarUrl: string | null
   onCam: (m: Avatar3DViewMode) => void
   onChange: (next: Avatar3DCustomization) => void
+  onGenderChange: (g: Gender) => void
   onClose: () => void
   onSave: () => void
 }
@@ -47,10 +48,14 @@ export function AvatarStudioPanel({
   avatarUrl,
   onCam,
   onChange,
+  onGenderChange,
   onClose,
   onSave,
 }: Props) {
   const patch = (partial: Partial<Avatar3DCustomization>) => onChange({ ...draft, ...partial })
+  void avatarUrl
+  void cam
+  void onCam
 
   return (
     <div
@@ -88,40 +93,46 @@ export function AvatarStudioPanel({
         </button>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0' }}>
-        <Realistic3DAvatarDisc
-          avatarUrl={avatarUrl || ''}
-          sizePx={cam === 'head' ? 88 : 110}
-          gender={gender}
-          avatar3d={draft}
-          viewMode={cam}
-        />
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0' }}>
+        <GlbCharacterViewer gender={gender} width={240} height={300} />
       </div>
 
       <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
         {([
-          { id: 'full' as const, label: 'تەواو' },
-          { id: 'head' as const, label: 'سەر' },
-        ]).map(opt => (
+          { id: 'male' as const, label: 'نێر', icon: 'man' },
+          { id: 'female' as const, label: 'مێ', icon: 'woman' },
+        ]).map((opt) => (
           <button
             key={opt.id}
             type="button"
             className="btn-interactive"
-            onClick={() => onCam(opt.id)}
+            onClick={() => onGenderChange(opt.id)}
             style={{
-              padding: '5px 12px',
-              borderRadius: 9,
-              border: `1px solid ${cam === opt.id ? 'rgba(251,191,36,0.55)' : 'rgba(255,255,255,0.12)'}`,
-              background: cam === opt.id ? 'rgba(251,191,36,0.2)' : 'rgba(255,255,255,0.04)',
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: '8px 12px',
+              borderRadius: 10,
+              border: `1px solid ${gender === opt.id ? 'rgba(251,191,36,0.65)' : 'rgba(255,255,255,0.12)'}`,
+              background: gender === opt.id ? 'rgba(251,191,36,0.22)' : 'rgba(255,255,255,0.04)',
               color: '#f8fafc',
-              fontSize: 10,
-              fontWeight: 800,
+              fontSize: 11,
+              fontWeight: 900,
             }}
           >
+            <i className="material-icons" style={{ fontSize: 16, color: gender === opt.id ? '#fbbf24' : '#94a3b8' }}>
+              {opt.icon}
+            </i>
             {opt.label}
           </button>
         ))}
       </div>
+
+      <p style={{ margin: 0, fontSize: 9, color: '#94a3b8', textAlign: 'center', fontWeight: 700 }}>
+        جووڵەی idle بەردەوام دەجووڵێت — نێر / مێ هەڵبژێرە
+      </p>
 
       <SwatchRow label="ڕەنگی پێست">
         {SKIN_PALETTE.map((tone, i) => (

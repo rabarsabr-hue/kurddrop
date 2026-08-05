@@ -1482,13 +1482,12 @@
 
     .map-avatar-visual.is-selected {
 
-      transform: translate3d(-50%, 0, 0) scale(calc(var(--vs, 1) * 1.42)) !important;
+      /* گەورەبوون لابرا — هەمان قیاسی کارەکتەری تر بۆ جووڵەی جوانتر */
+      transform: translate3d(-50%, 0, 0) scale(var(--vs, 1)) !important;
 
       filter:
-
-        drop-shadow(0 6px 14px rgba(0, 0, 0, 0.65))
-
-        drop-shadow(0 0 18px rgba(0, 240, 255, 0.45)) !important;
+        drop-shadow(0 4px 10px rgba(0, 0, 0, 0.55))
+        drop-shadow(0 0 10px rgba(0, 240, 255, 0.28)) !important;
 
     }
 
@@ -6006,11 +6005,7 @@
 
     }
 
-    /* ══ Full-body 3D map avatars — realistic STATIC standing pose only ══ */
-
-    /* Walk / idle sway / bob / limb swings / ring pulse removed.
-
-       Movement systems will come later from the shop. */
+    /* ══ Full-body 3D map avatars — walk + social motions ══ */
 
     .map-avatar-marker--fullbody,
 
@@ -6028,15 +6023,484 @@
 
     }
 
-    .map-avatar-marker--fullbody .kd-fb3d-figure,
+    .kd-glb-avatar {
+      display: block;
+      overflow: visible !important;
+      background: transparent !important;
+    }
 
-    .map-avatar-marker--fullbody .kd-fb3d-leg-l,
+    .kd-glb-avatar .kd-glb-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
 
-    .map-avatar-marker--fullbody .kd-fb3d-leg-r,
+    .kd-glb-avatar .kd-glb-placeholder {
+      transition: opacity 0.2s ease;
+      pointer-events: none;
+    }
 
     .map-avatar-marker--fullbody .kd-fb3d-arm-l,
-
     .map-avatar-marker--fullbody .kd-fb3d-arm-r,
+    .map-avatar-marker--fullbody .kd-fb3d-leg-l,
+    .map-avatar-marker--fullbody .kd-fb3d-leg-r,
+    .map-avatar-marker--fullbody .kd-fb3d-figure {
+      transform-box: fill-box;
+      transform-origin: center top;
+      will-change: transform;
+    }
+
+    .map-avatar-marker--fullbody .kd-fb3d-arm-l { transform-origin: 90% 8%; }
+    .map-avatar-marker--fullbody .kd-fb3d-arm-r { transform-origin: 10% 8%; }
+    .map-avatar-marker--fullbody .kd-fb3d-leg-l { transform-origin: 50% 0%; }
+    .map-avatar-marker--fullbody .kd-fb3d-leg-r { transform-origin: 50% 0%; }
+    .map-avatar-marker--fullbody .kd-fb3d-figure { transform-origin: 50% 95%; }
+    .map-avatar-marker--fullbody .kd-fb3d-head {
+      transform-box: fill-box;
+      transform-origin: 50% 85%;
+      will-change: transform;
+    }
+
+    /* —— Walk —— */
+    @keyframes kd-fb3d-walk-bob {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-2.5px); }
+    }
+    @keyframes kd-fb3d-walk-leg-l {
+      0%, 100% { transform: rotate(14deg); }
+      50% { transform: rotate(-16deg); }
+    }
+    @keyframes kd-fb3d-walk-leg-r {
+      0%, 100% { transform: rotate(-14deg); }
+      50% { transform: rotate(16deg); }
+    }
+    @keyframes kd-fb3d-walk-arm-l {
+      0%, 100% { transform: rotate(-18deg); }
+      50% { transform: rotate(16deg); }
+    }
+    @keyframes kd-fb3d-walk-arm-r {
+      0%, 100% { transform: rotate(18deg); }
+      50% { transform: rotate(-16deg); }
+    }
+    .kd-fb3d--walk .kd-fb3d-figure { animation: kd-fb3d-walk-bob 0.42s ease-in-out infinite; }
+    .kd-fb3d--walk .kd-fb3d-leg-l { animation: kd-fb3d-walk-leg-l 0.42s ease-in-out infinite; }
+    .kd-fb3d--walk .kd-fb3d-leg-r { animation: kd-fb3d-walk-leg-r 0.42s ease-in-out infinite; }
+    .kd-fb3d--walk .kd-fb3d-arm-l { animation: kd-fb3d-walk-arm-l 0.42s ease-in-out infinite; }
+    .kd-fb3d--walk .kd-fb3d-arm-r { animation: kd-fb3d-walk-arm-r 0.42s ease-in-out infinite; }
+
+    /* —— Kiss (لارکردنەوەی ڕوون + ماچی ڕوومەت) —— */
+    @keyframes kd-fb3d-kiss-arm-r {
+      0% { transform: rotate(0deg); }
+      28% { transform: rotate(-25deg) translate(2px, -2px); }
+      48% { transform: rotate(-72deg) translate(8px, -10px); }
+      62% { transform: rotate(-68deg) translate(9px, -9px); }
+      100% { transform: rotate(-20deg) translate(2px, -2px); }
+    }
+    @keyframes kd-fb3d-kiss-arm-l {
+      0% { transform: rotate(0deg); }
+      28% { transform: rotate(25deg) translate(-2px, -2px); }
+      48% { transform: rotate(72deg) translate(-8px, -10px); }
+      62% { transform: rotate(68deg) translate(-9px, -9px); }
+      100% { transform: rotate(20deg) translate(-2px, -2px); }
+    }
+    @keyframes kd-fb3d-kiss-lean-r {
+      0% { transform: rotate(0deg) translate(0, 0); }
+      30% { transform: rotate(8deg) translate(6px, 2px); }
+      50% { transform: rotate(16deg) translate(16px, 4px); }
+      65% { transform: rotate(14deg) translate(14px, 3px); }
+      100% { transform: rotate(4deg) translate(4px, 1px); }
+    }
+    @keyframes kd-fb3d-kiss-lean-l {
+      0% { transform: rotate(0deg) translate(0, 0); }
+      30% { transform: rotate(-8deg) translate(-6px, 2px); }
+      50% { transform: rotate(-16deg) translate(-16px, 4px); }
+      65% { transform: rotate(-14deg) translate(-14px, 3px); }
+      100% { transform: rotate(-4deg) translate(-4px, 1px); }
+    }
+    @keyframes kd-fb3d-kiss-head-r {
+      0% { transform: rotate(0deg); }
+      35% { transform: rotate(10deg) translate(2px, 1px); }
+      52% { transform: rotate(18deg) translate(5px, 3px); }
+      68% { transform: rotate(16deg) translate(4px, 2px); }
+      100% { transform: rotate(4deg); }
+    }
+    @keyframes kd-fb3d-kiss-head-l {
+      0% { transform: rotate(0deg); }
+      35% { transform: rotate(-10deg) translate(-2px, 1px); }
+      52% { transform: rotate(-18deg) translate(-5px, 3px); }
+      68% { transform: rotate(-16deg) translate(-4px, 2px); }
+      100% { transform: rotate(-4deg); }
+    }
+    .kd-fb3d--kiss .kd-fb3d-figure,
+    .kd-fb3d--kiss_r .kd-fb3d-figure { animation: kd-fb3d-kiss-lean-r 2.8s ease-in-out forwards; }
+    .kd-fb3d--kiss .kd-fb3d-arm-r,
+    .kd-fb3d--kiss_r .kd-fb3d-arm-r { animation: kd-fb3d-kiss-arm-r 2.8s ease-in-out forwards; }
+    .kd-fb3d--kiss .kd-fb3d-head,
+    .kd-fb3d--kiss_r .kd-fb3d-head { animation: kd-fb3d-kiss-head-r 2.8s ease-in-out forwards; }
+    .kd-fb3d--kiss_l .kd-fb3d-figure { animation: kd-fb3d-kiss-lean-l 2.8s ease-in-out forwards; }
+    .kd-fb3d--kiss_l .kd-fb3d-arm-l { animation: kd-fb3d-kiss-arm-l 2.8s ease-in-out forwards; }
+    .kd-fb3d--kiss_l .kd-fb3d-head { animation: kd-fb3d-kiss-head-l 2.8s ease-in-out forwards; }
+
+    /* —— Hug —— */
+    @keyframes kd-fb3d-hug-arms {
+      0%, 100% { transform: rotate(0deg); }
+      40% { transform: rotate(-40deg) scaleY(0.95); }
+      60% { transform: rotate(-35deg); }
+    }
+    @keyframes kd-fb3d-hug-arms-r {
+      0%, 100% { transform: rotate(0deg); }
+      40% { transform: rotate(40deg) scaleY(0.95); }
+      60% { transform: rotate(35deg); }
+    }
+    .kd-fb3d--hug .kd-fb3d-arm-l { animation: kd-fb3d-hug-arms 2s ease-in-out; }
+    .kd-fb3d--hug .kd-fb3d-arm-r { animation: kd-fb3d-hug-arms-r 2s ease-in-out; }
+
+    /* —— Slap —— */
+    @keyframes kd-fb3d-slap {
+      0% { transform: rotate(0deg); }
+      25% { transform: rotate(55deg); }
+      40% { transform: rotate(-70deg); }
+      55% { transform: rotate(-55deg); }
+      100% { transform: rotate(0deg); }
+    }
+    .kd-fb3d--slap .kd-fb3d-arm-r { animation: kd-fb3d-slap 1.5s ease-in-out; }
+
+    /* —— Punch (نێرەر — لێدانی بەهێز) —— */
+    @keyframes kd-fb3d-punch {
+      0% { transform: rotate(0deg) translate(0, 0); }
+      22% { transform: rotate(32deg) translate(-4px, 3px); }
+      42% { transform: rotate(-28deg) translate(14px, -10px) scaleX(1.08); }
+      55% { transform: rotate(-18deg) translate(10px, -6px); }
+      100% { transform: rotate(0deg) translate(0, 0); }
+    }
+    @keyframes kd-fb3d-punch-body {
+      0%, 100% { transform: translateX(0) rotate(0deg); }
+      42% { transform: translateX(5px) rotate(4deg); }
+      55% { transform: translateX(3px) rotate(2deg); }
+    }
+    .kd-fb3d--punch .kd-fb3d-figure { animation: kd-fb3d-punch-body 2.4s ease-in-out; }
+    .kd-fb3d--punch .kd-fb3d-arm-r { animation: kd-fb3d-punch 2.4s ease-in-out; }
+
+    /* —— Kick —— */
+    @keyframes kd-fb3d-kick {
+      0%, 100% { transform: rotate(0deg); }
+      35% { transform: rotate(-20deg); }
+      50% { transform: rotate(55deg) translateY(-4px); }
+      70% { transform: rotate(20deg); }
+    }
+    .kd-fb3d--kick .kd-fb3d-leg-r { animation: kd-fb3d-kick 1.6s ease-in-out; }
+    .kd-fb3d--kick .kd-fb3d-arm-l { animation: kd-fb3d-walk-arm-l 1.6s ease-in-out; }
+
+    /* —— Wave —— */
+    @keyframes kd-fb3d-wave {
+      0%, 100% { transform: rotate(0deg); }
+      20% { transform: rotate(-110deg); }
+      35% { transform: rotate(-90deg); }
+      50% { transform: rotate(-120deg); }
+      65% { transform: rotate(-90deg); }
+      80% { transform: rotate(-110deg); }
+    }
+    .kd-fb3d--wave .kd-fb3d-arm-r { animation: kd-fb3d-wave 1.6s ease-in-out; }
+
+    /* —— Bow —— */
+    @keyframes kd-fb3d-bow {
+      0%, 100% { transform: rotate(0deg); }
+      40% { transform: rotate(22deg) translateY(4px); }
+      60% { transform: rotate(18deg) translateY(3px); }
+    }
+    .kd-fb3d--bow .kd-fb3d-figure { animation: kd-fb3d-bow 1.7s ease-in-out; }
+
+    /* —— Dance —— */
+    @keyframes kd-fb3d-dance-body {
+      0%, 100% { transform: rotate(-4deg) translateX(-2px); }
+      50% { transform: rotate(4deg) translateX(2px); }
+    }
+    @keyframes kd-fb3d-dance-arm-l {
+      0%, 100% { transform: rotate(-50deg); }
+      50% { transform: rotate(-20deg); }
+    }
+    @keyframes kd-fb3d-dance-arm-r {
+      0%, 100% { transform: rotate(20deg); }
+      50% { transform: rotate(55deg); }
+    }
+    .kd-fb3d--dance .kd-fb3d-figure { animation: kd-fb3d-dance-body 0.55s ease-in-out infinite; }
+    .kd-fb3d--dance .kd-fb3d-arm-l { animation: kd-fb3d-dance-arm-l 0.55s ease-in-out infinite; }
+    .kd-fb3d--dance .kd-fb3d-arm-r { animation: kd-fb3d-dance-arm-r 0.55s ease-in-out infinite; }
+    .kd-fb3d--dance .kd-fb3d-leg-l { animation: kd-fb3d-walk-leg-l 0.55s ease-in-out infinite; }
+    .kd-fb3d--dance .kd-fb3d-leg-r { animation: kd-fb3d-walk-leg-r 0.55s ease-in-out infinite; }
+
+    /* —— High five —— */
+    @keyframes kd-fb3d-highfive {
+      0%, 100% { transform: rotate(0deg); }
+      40% { transform: rotate(-100deg) translate(2px, -8px); }
+      55% { transform: rotate(-95deg) translate(3px, -6px); }
+    }
+    .kd-fb3d--highfive .kd-fb3d-arm-r { animation: kd-fb3d-highfive 1.6s ease-in-out; }
+
+    /* —— Laugh —— */
+    @keyframes kd-fb3d-laugh-body {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      25% { transform: translateY(-3px) rotate(-3deg); }
+      50% { transform: translateY(0) rotate(3deg); }
+      75% { transform: translateY(-2px) rotate(-2deg); }
+    }
+    @keyframes kd-fb3d-laugh-arm {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(-25deg); }
+    }
+    .kd-fb3d--laugh .kd-fb3d-figure { animation: kd-fb3d-laugh-body 0.45s ease-in-out infinite; }
+    .kd-fb3d--laugh .kd-fb3d-arm-l,
+    .kd-fb3d--laugh .kd-fb3d-arm-r { animation: kd-fb3d-laugh-arm 0.45s ease-in-out infinite; }
+
+    /* —— Reactions (وەرگر) —— */
+    @keyframes kd-fb3d-shy-tremble {
+      0%, 100% { transform: translateX(0) rotate(-4deg); }
+      25% { transform: translateX(-2px) rotate(-7deg); }
+      50% { transform: translateX(2px) rotate(-3deg); }
+      75% { transform: translateX(-1px) rotate(-6deg); }
+    }
+    @keyframes kd-fb3d-shy-hands {
+      0%, 100% { transform: rotate(-15deg); }
+      50% { transform: rotate(-55deg) translate(2px, -4px); }
+    }
+    @keyframes kd-fb3d-shy-head {
+      0% { transform: rotate(0deg); }
+      40% { transform: rotate(-12deg) translateY(2px); }
+      70% { transform: rotate(-8deg) translateY(1px); }
+      100% { transform: rotate(-5deg); }
+    }
+    .kd-fb3d--shy .kd-fb3d-figure { animation: kd-fb3d-shy-tremble 0.28s ease-in-out infinite; }
+    .kd-fb3d--shy .kd-fb3d-arm-l,
+    .kd-fb3d--shy .kd-fb3d-arm-r { animation: kd-fb3d-shy-hands 2.2s ease-in-out; }
+    .kd-fb3d--shy .kd-fb3d-head { animation: kd-fb3d-shy-head 2.2s ease-in-out forwards; }
+
+    @keyframes kd-fb3d-hug-recv-l {
+      0%, 100% { transform: rotate(0deg); }
+      40% { transform: rotate(-48deg); }
+      70% { transform: rotate(-40deg); }
+    }
+    @keyframes kd-fb3d-hug-recv-r {
+      0%, 100% { transform: rotate(0deg); }
+      40% { transform: rotate(48deg); }
+      70% { transform: rotate(40deg); }
+    }
+    .kd-fb3d--hug_recv .kd-fb3d-arm-l { animation: kd-fb3d-hug-recv-l 2.4s ease-in-out; }
+    .kd-fb3d--hug_recv .kd-fb3d-arm-r { animation: kd-fb3d-hug_recv-r 2.4s ease-in-out; }
+
+    @keyframes kd-fb3d-recoil-body {
+      0% { transform: translateX(0) rotate(0deg); }
+      25% { transform: translateX(8px) rotate(10deg); }
+      55% { transform: translateX(5px) rotate(6deg); }
+      100% { transform: translateX(0) rotate(0deg); }
+    }
+    @keyframes kd-fb3d-recoil-hand {
+      0%, 100% { transform: rotate(0deg); }
+      30% { transform: rotate(-70deg); }
+      60% { transform: rotate(-40deg); }
+    }
+    .kd-fb3d--recoil .kd-fb3d-figure { animation: kd-fb3d-recoil-body 2s ease-out; }
+    .kd-fb3d--recoil .kd-fb3d-arm-l { animation: kd-fb3d-recoil-hand 2s ease-out; }
+
+    @keyframes kd-fb3d-fall-body {
+      0% { transform: translateY(0) rotate(0deg); }
+      35% { transform: translateY(2px) rotate(-18deg) translateX(-4px); }
+      55% { transform: translateY(10px) rotate(-55deg) translateX(-6px); }
+      75% { transform: translateY(12px) rotate(-62deg) translateX(-7px); }
+      100% { transform: translateY(4px) rotate(-20deg) translateX(-3px); }
+    }
+    .kd-fb3d--fall .kd-fb3d-figure { animation: kd-fb3d-fall-body 2.2s ease-in-out; }
+    .kd-fb3d--fall .kd-fb3d-arm-l { animation: kd-fb3d-walk-arm-l 2.2s ease-in-out; }
+    .kd-fb3d--fall .kd-fb3d-arm-r { animation: kd-fb3d-walk-arm-r 2.2s ease-in-out; }
+
+    @keyframes kd-fb3d-hold-leg-hop {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      20% { transform: translateY(-6px) rotate(-4deg); }
+      40% { transform: translateY(0) rotate(2deg); }
+      60% { transform: translateY(-3px); }
+    }
+    @keyframes kd-fb3d-hold-leg-lift {
+      0%, 100% { transform: rotate(0deg); }
+      30% { transform: rotate(35deg) translateY(-2px); }
+      70% { transform: rotate(28deg); }
+    }
+    @keyframes kd-fb3d-hold-leg-hands {
+      0% { transform: rotate(0deg); }
+      40% { transform: rotate(55deg) translate(4px, 8px); }
+      70% { transform: rotate(50deg) translate(3px, 7px); }
+      100% { transform: rotate(20deg); }
+    }
+    .kd-fb3d--hold_leg .kd-fb3d-figure { animation: kd-fb3d-hold-leg-hop 2.3s ease-in-out; }
+    .kd-fb3d--hold_leg .kd-fb3d-leg-r { animation: kd-fb3d-hold-leg-lift 2.3s ease-in-out; }
+    .kd-fb3d--hold_leg .kd-fb3d-arm-l,
+    .kd-fb3d--hold_leg .kd-fb3d-arm-r { animation: kd-fb3d-hold-leg-hands 2.3s ease-in-out; }
+
+    /* —— Human idle: breath + gentle sway (هەمیشەیی) —— */
+    @keyframes kd-fb3d-breathe {
+      0%, 100% { transform: translateY(0) scaleY(1); }
+      50% { transform: translateY(-1.8px) scaleY(1.015); }
+    }
+    @keyframes kd-fb3d-breathe-sway {
+      0%, 100% { transform: rotate(-0.8deg); }
+      50% { transform: rotate(0.9deg); }
+    }
+    @keyframes kd-fb3d-breathe-arms {
+      0%, 100% { transform: rotate(-2deg); }
+      50% { transform: rotate(3deg); }
+    }
+    .kd-fb3d--stand_breathe .kd-fb3d-figure,
+    .kd-fb3d--idle .kd-fb3d-figure {
+      animation: kd-fb3d-breathe 3.2s ease-in-out infinite;
+    }
+    .kd-fb3d--stand_breathe .kd-fb3d-head,
+    .kd-fb3d--idle .kd-fb3d-head {
+      animation: kd-fb3d-breathe-sway 4.5s ease-in-out infinite;
+    }
+    .kd-fb3d--stand_breathe .kd-fb3d-arm-l,
+    .kd-fb3d--idle .kd-fb3d-arm-l {
+      animation: kd-fb3d-breathe-arms 3.6s ease-in-out infinite;
+    }
+    .kd-fb3d--stand_breathe .kd-fb3d-arm-r,
+    .kd-fb3d--idle .kd-fb3d-arm-r {
+      animation: kd-fb3d-breathe-arms 3.6s ease-in-out infinite reverse;
+    }
+
+    /* —— Nervous (پێش داوای هاوسەرگیری) —— */
+    @keyframes kd-fb3d-nervous-body {
+      0%, 100% { transform: translateX(0) rotate(0deg); }
+      25% { transform: translateX(-2px) rotate(-1.5deg); }
+      50% { transform: translateX(2px) rotate(1.2deg); }
+      75% { transform: translateX(-1px) rotate(-0.8deg); }
+    }
+    @keyframes kd-fb3d-nervous-hands {
+      0%, 100% { transform: rotate(8deg) translateY(2px); }
+      50% { transform: rotate(18deg) translateY(4px); }
+    }
+    .kd-fb3d--nervous .kd-fb3d-figure { animation: kd-fb3d-nervous-body 0.55s ease-in-out infinite; }
+    .kd-fb3d--nervous .kd-fb3d-arm-l,
+    .kd-fb3d--nervous .kd-fb3d-arm-r { animation: kd-fb3d-nervous-hands 0.7s ease-in-out infinite; }
+    .kd-fb3d--nervous .kd-fb3d-head { animation: kd-fb3d-breathe-sway 1.2s ease-in-out infinite; }
+
+    /* —— Kneel (چۆکدانان) —— */
+    @keyframes kd-fb3d-kneel-down {
+      0% { transform: translateY(0) scaleY(1); }
+      55% { transform: translateY(16px) scaleY(0.78); }
+      100% { transform: translateY(18px) scaleY(0.74); }
+    }
+    @keyframes kd-fb3d-kneel-leg {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(42deg) translateY(4px); }
+    }
+    .kd-fb3d--kneel .kd-fb3d-figure { animation: kd-fb3d-kneel-down 0.9s ease-out forwards; }
+    .kd-fb3d--kneel .kd-fb3d-leg-r { animation: kd-fb3d-kneel-leg 0.9s ease-out forwards; }
+    .kd-fb3d--kneel .kd-fb3d-arm-l { transform: rotate(12deg); }
+    .kd-fb3d--kneel .kd-fb3d-arm-r { transform: rotate(-8deg); }
+    .kd-fb3d--kneel .kd-fb3d-head { transform: rotate(6deg) translateY(2px); }
+
+    /* —— Ring from pocket —— */
+    @keyframes kd-fb3d-pocket-reach {
+      0% { transform: rotate(0deg) translate(0, 0); }
+      40% { transform: rotate(55deg) translate(2px, 10px); }
+      70% { transform: rotate(40deg) translate(4px, 6px); }
+      100% { transform: rotate(-70deg) translate(6px, -12px); }
+    }
+    .kd-fb3d--ring_pocket .kd-fb3d-figure { transform: translateY(18px) scaleY(0.74); }
+    .kd-fb3d--ring_pocket .kd-fb3d-leg-r { transform: rotate(42deg) translateY(4px); }
+    .kd-fb3d--ring_pocket .kd-fb3d-arm-r { animation: kd-fb3d-pocket-reach 0.7s ease-in-out forwards; }
+    .kd-fb3d--ring_pocket .kd-fb3d-head { transform: rotate(8deg); }
+
+    /* —— Offer ring —— */
+    @keyframes kd-fb3d-offer-arm {
+      0% { transform: rotate(-70deg) translate(6px, -12px); }
+      100% { transform: rotate(-100deg) translate(4px, -16px); }
+    }
+    @keyframes kd-fb3d-offer-bob {
+      0%, 100% { transform: translateY(18px) scaleY(0.74); }
+      50% { transform: translateY(16px) scaleY(0.75); }
+    }
+    .kd-fb3d--offer_ring .kd-fb3d-figure { animation: kd-fb3d-offer-bob 1.4s ease-in-out infinite; }
+    .kd-fb3d--offer_ring .kd-fb3d-leg-r { transform: rotate(42deg) translateY(4px); }
+    .kd-fb3d--offer_ring .kd-fb3d-arm-r { animation: kd-fb3d-offer-arm 0.5s ease-out forwards; }
+    .kd-fb3d--offer_ring .kd-fb3d-head { transform: rotate(10deg) translateY(2px); }
+
+    /* Prop ring overlay near hand */
+    .kd-fb3d-avatar.kd-fb3d-has-prop-ring::after {
+      content: '💍';
+      position: absolute;
+      left: 62%;
+      top: 28%;
+      font-size: 14px;
+      filter: drop-shadow(0 0 6px rgba(255, 215, 120, 0.85));
+      animation: kd-mi-ring-pop 1.2s ease-out infinite;
+      pointer-events: none;
+      z-index: 4;
+    }
+    .kd-fb3d-avatar.kd-fb3d--ring_pocket.kd-fb3d-has-prop-ring::after {
+      left: 58%;
+      top: 48%;
+      font-size: 11px;
+      animation: kd-mi-sparkle 0.8s ease-out infinite;
+    }
+
+    /* —— Shock (وەرگر) —— */
+    @keyframes kd-fb3d-shock-body {
+      0% { transform: translateY(0) scale(1); }
+      30% { transform: translateY(-4px) scale(1.04); }
+      55% { transform: translateY(-2px) rotate(-3deg); }
+      100% { transform: translateY(0) rotate(-2deg); }
+    }
+    @keyframes kd-fb3d-shock-hands {
+      0% { transform: rotate(0deg); }
+      40% { transform: rotate(-70deg) translate(0, -8px); }
+      100% { transform: rotate(-55deg) translate(0, -4px); }
+    }
+    .kd-fb3d--shock .kd-fb3d-figure { animation: kd-fb3d-shock-body 0.85s ease-out forwards; }
+    .kd-fb3d--shock .kd-fb3d-arm-l,
+    .kd-fb3d--shock .kd-fb3d-arm-r { animation: kd-fb3d-shock-hands 0.85s ease-out forwards; }
+    .kd-fb3d--shock .kd-fb3d-head { transform: rotate(-8deg) scale(1.05); }
+
+    /* —— Dizzy (وەرگر دوای مشت) —— */
+    @keyframes kd-fb3d-dizzy-body {
+      0% { transform: translateX(0) rotate(0deg); }
+      18% { transform: translateX(10px) rotate(8deg); }
+      35% { transform: translateX(6px) rotate(-4deg) translateY(2px); }
+      55% { transform: translateX(4px) rotate(3deg); }
+      100% { transform: translateX(0) rotate(0deg); }
+    }
+    @keyframes kd-fb3d-dizzy-head {
+      0% { transform: rotate(0deg); }
+      20% { transform: rotate(-18deg) translateX(2px); }
+      40% { transform: rotate(22deg) translateX(-2px); }
+      60% { transform: rotate(-14deg); }
+      80% { transform: rotate(10deg); }
+      100% { transform: rotate(0deg); }
+    }
+    .kd-fb3d--dizzy .kd-fb3d-figure { animation: kd-fb3d-dizzy-body 2.4s ease-out; }
+    .kd-fb3d--dizzy .kd-fb3d-head { animation: kd-fb3d-dizzy-head 2.4s ease-in-out; }
+    .kd-fb3d--dizzy .kd-fb3d-arm-l { animation: kd-fb3d-recoil-hand 2.4s ease-out; }
+
+    /* —— Propose (دانیشتن + ئەڵقە) —— */
+    @keyframes kd-fb3d-propose-kneel {
+      0% { transform: translateY(0) scaleY(1); }
+      35% { transform: translateY(10px) scaleY(0.88); }
+      55% { transform: translateY(14px) scaleY(0.82); }
+      100% { transform: translateY(12px) scaleY(0.84); }
+    }
+    @keyframes kd-fb3d-propose-arm {
+      0% { transform: rotate(0deg); }
+      30% { transform: rotate(-20deg); }
+      50% { transform: rotate(-95deg) translate(2px, -10px); }
+      100% { transform: rotate(-88deg) translate(3px, -8px); }
+    }
+    @keyframes kd-fb3d-propose-leg {
+      0% { transform: rotate(0deg); }
+      40% { transform: rotate(28deg) translateY(2px); }
+      100% { transform: rotate(32deg) translateY(3px); }
+    }
+    .kd-fb3d--propose .kd-fb3d-figure { animation: kd-fb3d-propose-kneel 3s ease-in-out forwards; }
+    .kd-fb3d--propose .kd-fb3d-arm-r { animation: kd-fb3d-propose-arm 3s ease-in-out forwards; }
+    .kd-fb3d--propose .kd-fb3d-leg-r { animation: kd-fb3d-propose-leg 3s ease-in-out forwards; }
+    .kd-fb3d--propose .kd-fb3d-head { animation: kd-fb3d-bow 3s ease-in-out; }
 
     .map-avatar-marker--fullbody .kd-fb3d-ring,
 

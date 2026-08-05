@@ -38,6 +38,29 @@ import {
 } from './data/gifts'
 
 import {
+  MOTION_ITEMS,
+  MOTION_BY_ID,
+  MOTION_WALK_TO_MS,
+  MOTION_WALK_BACK_MS,
+  MOTION_REACTION,
+  MOTION_VISUAL_POSE,
+  canAffordMotion,
+  formatMotionCostLabel,
+  motionValueScore,
+  getMotionApproachT,
+  resolveKissVisualPose,
+  easeInOutCubic,
+  lerpGeo,
+  isMotionId,
+  type MotionId,
+  type MotionDef,
+  type MotionLeanSide,
+  type ScriptedMotionState,
+} from './data/motions'
+import { getMotionTimeline, sumBeatMs } from './data/motionTimelines'
+import { patchMarkerAvatarPose } from './rive/mapAvatarRuntime'
+
+import {
   isProtectedAccount,
   lockProtectedWallet,
   PROTECTED_LOCKED_GOLD,
@@ -107,7 +130,6 @@ import {
   applyGiftTrajectoryPathD,
   refreshGiftTrajectoryPaths,
   fadeOutGiftSvgPath,
-  donateItemValueScore,
   sfxForDonateItem,
   spawnMapAmbientGiftFx,
   royalRankMedal,
@@ -115,8 +137,6 @@ import {
   donateFlyVisualScale,
   donateFlyIconSize,
   donateFlyZIndex,
-  canAffordDonateItem,
-  formatDonateCostLabel,
   spinDegToRad,
   spinSliceAngles,
   spinPolar,
@@ -516,7 +536,6 @@ import {
   GLOBAL_CHAT_FEED_MAX,
   createInitialNpcStates,
   liveNpcToPlayerLocation,
-  pickOneNpcAutoAction,
   pickOnlineGlobalChatLine,
   nextGlobalChatDelayMs,
   isNpcPlayerUid,
@@ -528,8 +547,6 @@ import {
   finalizeNpcRelocations,
   shouldPlayNpcAppearAnim,
   shouldPlayNpcDisappearAnim,
-  applyNpcGiftXp,
-  applyNpcGiftTransfer,
   nextNpcChatDelayMs,
   tickNpcStatsGrowth,
   tickNpcDailySystems,
@@ -644,7 +661,6 @@ import {
   incrementLeaderboardWealth,
   ensureLeaderboardEpoch,
   runLeaderboardFactoryResetIfNeeded,
-  recordNpcGiftScore,
   upsertNpcLeaderboardPresence,
   type LeaderboardEntry,
   type RoyalLeaderboardEntry,
@@ -765,6 +781,7 @@ import {
   type Avatar3DViewMode,
 
 } from './fullBody3dAvatar'
+import { syncMapGlbAvatars, preloadCharacterTemplates } from './glb/mapGlbAvatarSystem'
 
 import { HeadShotAvatar, Realistic3DAvatarDisc } from './components/Realistic3DAvatar'
 import { formatUsd, preloadCurrencyPackImages, GOLD_PACK_6_ICON, GEM_PACK_6_ICON } from './currencyStore'
@@ -965,6 +982,14 @@ export default function App() {
   const selfMovedAtRef = useRef(0)
 
   const selfIconSigRef = useRef('')
+
+  /** جووڵەی سکریپتکراو: ڕۆیشتن → کردار → گەڕانەوە */
+  const scriptedMotionRef = useRef<ScriptedMotionState | null>(null)
+  const scriptedDisplayPosRef = useRef<{ lat: number; lng: number } | null>(null)
+  const scriptedMotionPoseRef = useRef<string>('static')
+  const scriptedMotionRafRef = useRef<number | null>(null)
+  /** وەڵامی جووڵەی کارەکتەری بەرامبەر */
+  const otherPlayerMotionPoseRef = useRef<Map<string, string>>(new Map())
 
   const mapZoomRef = useRef(14)
 
@@ -2524,6 +2549,8 @@ export default function App() {
 
     displayName?: string | null,
 
+    motion?: string | null,
+
   ) => {
 
     const fullBody = useFullBody3DAvatar
@@ -2552,6 +2579,8 @@ export default function App() {
 
       isMoving,
 
+      motion: motion ?? null,
+
       avatar3d: avatar3d ?? null,
 
     })
@@ -2565,9 +2594,10 @@ export default function App() {
 
       : buildAvatarFrameHtml(inner, border, 38, headwear, accessory)
 
-    const chestBadge = buildMapChestBadgeHtml(hunterLevel)
+    // تەنها کارەکتەری GLB — بێ ڕینگ / بادج / وێنەی تر
+    const chestBadge = fullBody ? '' : buildMapChestBadgeHtml(hunterLevel)
 
-    const footRing = buildMapFootRingHtml(hunterLevel)
+    const footRing = fullBody ? '' : buildMapFootRingHtml(hunterLevel)
 
     const fx = buildPlayerFxOverlayHtml(smokeUntilMs, duelFxUntilMs, activeDuelId)
 
@@ -2645,6 +2675,8 @@ export default function App() {
 
     isSelected = false,
 
+    motion?: string | null,
+
   ) => {
 
     const fullBody = useFullBody3DAvatar
@@ -2673,6 +2705,8 @@ export default function App() {
 
       isMoving,
 
+      motion: motion ?? null,
+
       avatar3d: avatar3d ?? null,
 
     })
@@ -2685,9 +2719,9 @@ export default function App() {
 
       : buildAvatarFrameHtml(inner, border, 38, headwear, accessory)
 
-    const chestBadge = buildMapChestBadgeHtml(hunterLevel)
+    const chestBadge = fullBody ? '' : buildMapChestBadgeHtml(hunterLevel)
 
-    const footRing = buildMapFootRingHtml(hunterLevel)
+    const footRing = fullBody ? '' : buildMapFootRingHtml(hunterLevel)
 
     const fx = buildPlayerFxOverlayHtml(smokeUntilMs, duelFxUntilMs, activeDuelId)
 
@@ -2763,7 +2797,9 @@ export default function App() {
 
     const visualScale = useFullBody3DAvatar ? fullBodyScaleForZoom(mapZoomRef.current) : 1
 
-    const moving = selfMovingRef.current
+    const moving = selfMovingRef.current || scriptedMotionPoseRef.current === 'walk'
+
+    const motionPose = scriptedMotionPoseRef.current
 
     const fx = selfMapFxRef.current
 
@@ -2801,6 +2837,8 @@ export default function App() {
 
       moving ? '1' : '0',
 
+      motionPose,
+
       isSelected ? '1' : '0',
 
     ].join('|')
@@ -2829,6 +2867,8 @@ export default function App() {
 
         isSelected,
 
+        motionPose,
+
       ),
 
       iconSize: PLAYER_MARKER_ICON_SIZE,
@@ -2853,6 +2893,7 @@ export default function App() {
       patchMarkerFxOverlay(m, fxHtml)
       // Restore VIP size after icon rebuild (click empty / sheet close)
       reapplyVipSenderBoostVisualsRef.current()
+      syncMapGlbAvatars(m.getElement() || document)
     })
 
   }, [buildSelfPlayerMarkerHtml])
@@ -2898,6 +2939,22 @@ export default function App() {
 
   }, [avatarStudioDraft, pushLocationToFirestore, updateUserMarkerIcon])
 
+  const setAvatarStudioGender = useCallback(async (nextGender: Gender) => {
+    const uid = userIdRef.current
+    if (!uid) return
+    const g: Gender = nextGender === 'female' ? 'female' : 'male'
+    setUserProfile(prev => (prev ? { ...prev, gender: g } : prev))
+    userProfileRef.current = { ...(userProfileRef.current ?? FALLBACK_PROFILE), gender: g }
+    selfIconSigRef.current = ''
+    updateUserMarkerIconRef.current()
+    try {
+      await syncUserProfile(uid, { gender: g })
+      pushLocationToFirestore(userLatRef.current, userLngRef.current, true)
+    } catch {
+      /* preview still updates locally */
+    }
+  }, [pushLocationToFirestore])
+
   /** جێگیرکردنی ئاڤاتارەکان بە دووری ≥٢٥م + z-index — تەنها پیشاندان، GPSـی ڕاستەقینە ناگۆڕێت */
 
   const layoutMapAvatars = useCallback(() => {
@@ -2910,7 +2967,12 @@ export default function App() {
 
     if (showMyAvatarOnMapRef.current) {
 
-      avatars.push({ uid: selfUid, lat: userLatRef.current, lng: userLngRef.current })
+      const scripted = scriptedDisplayPosRef.current
+      avatars.push({
+        uid: selfUid,
+        lat: scripted?.lat ?? userLatRef.current,
+        lng: scripted?.lng ?? userLngRef.current,
+      })
 
     }
 
@@ -5359,7 +5421,7 @@ export default function App() {
             console.error('Local wipe after global reset failed:', err)
           }
         } else if (didLbFactory) {
-          // ٥ فەیکی نوێ لە سەرەتا
+          // ٢٠ فەیکی نوێ — ١٠ نێر + ١٠ مێ
           npcLiveRef.current = createInitialNpcStates(NPC_COUNT)
         } else if (npcLiveRef.current.length !== NPC_COUNT) {
           npcLiveRef.current = createInitialNpcStates(NPC_COUNT)
@@ -8158,11 +8220,12 @@ export default function App() {
 
     userLngRef.current = lng
 
-    userMarkerRef.current?.setLatLng([lat, lng])
-
-    updateUserMarkerIcon()
-
-    scheduleLayoutMapAvatars()
+    // لە کاتی جووڵەی سکریپتکراو — مارکەر مەگەڕێنەوە بۆ GPS
+    if (!scriptedMotionRef.current) {
+      userMarkerRef.current?.setLatLng([lat, lng])
+      updateUserMarkerIcon()
+      scheduleLayoutMapAvatars()
+    }
 
     if (calcDistance(prevNearbyLat, prevNearbyLng, lat, lng) >= 20) {
 
@@ -8172,6 +8235,7 @@ export default function App() {
 
     updateDistTracker(lat, lng)
 
+    // شوێنی ڕاستەقینە بۆ سێرڤەر — نەک ڕێگای جووڵە
     if (sync) pushLocationToFirestore(lat, lng, forceSync)
 
   }, [pushLocationToFirestore, updateUserMarkerIcon, scheduleLayoutMapAvatars, bumpMapPlayersTick])
@@ -9351,6 +9415,8 @@ export default function App() {
         mapGestureRef.current.dragging = false
         updateUserMarkerIconRef.current()
         bumpSize()
+        void preloadCharacterTemplates().then(() => syncMapGlbAvatars(document))
+        window.setTimeout(() => syncMapGlbAvatars(document), 200)
         readyT300 = setTimeout(() => {
           if (disposed || !map) return
           bumpSize()
@@ -9569,6 +9635,8 @@ export default function App() {
 
       const isSelected = selectedPlayerUidRef.current === uid
 
+      const motionPose = otherPlayerMotionPoseRef.current.get(uid) || 'static'
+
       const sig = [
 
         visualScale,
@@ -9601,6 +9669,8 @@ export default function App() {
 
         isSelected ? '1' : '0',
 
+        motionPose,
+
         showPlayerNamesRef.current ? '1' : '0',
 
         showPlayerNamesRef.current ? (player.name || '') : '',
@@ -9631,6 +9701,8 @@ export default function App() {
 
           player.name,
 
+          motionPose,
+
         ),
 
         iconSize: PLAYER_MARKER_ICON_SIZE,
@@ -9646,6 +9718,7 @@ export default function App() {
         const fxHtml = buildMapEffectOverlayHtml(uid, mapAvatarOverlaysRef.current)
         patchMarkerChatOverlay(marker, chatHtml, uid)
         patchMarkerFxOverlay(marker, fxHtml)
+        syncMapGlbAvatars(marker.getElement() || document)
       })
 
     })
@@ -10131,6 +10204,8 @@ export default function App() {
 
         const isSelected = selectedPlayerUidRef.current === player.uid
 
+        const motionPose = otherPlayerMotionPoseRef.current.get(player.uid) || 'static'
+
         const sig = [
 
           visualScale,
@@ -10162,6 +10237,8 @@ export default function App() {
           moving === true ? '1' : moving === false ? '0' : 'g',
 
           isSelected ? '1' : '0',
+
+          motionPose,
 
           showPlayerNamesRef.current ? '1' : '0',
 
@@ -10203,6 +10280,8 @@ export default function App() {
 
             player.name,
 
+            motionPose,
+
           ),
 
           iconSize: PLAYER_MARKER_ICON_SIZE,
@@ -10222,6 +10301,7 @@ export default function App() {
             const fxHtml = buildMapEffectOverlayHtml(player.uid, mapAvatarOverlaysRef.current)
             patchMarkerChatOverlay(existing, chatHtml, player.uid)
             patchMarkerFxOverlay(existing, fxHtml)
+            syncMapGlbAvatars(existing.getElement() || document)
           })
 
           return
@@ -10255,6 +10335,7 @@ export default function App() {
           const fxHtml = buildMapEffectOverlayHtml(player.uid, mapAvatarOverlaysRef.current)
           patchMarkerChatOverlay(marker, chatHtml, player.uid)
           patchMarkerFxOverlay(marker, fxHtml)
+          syncMapGlbAvatars(marker.getElement() || document)
         })
 
       })
@@ -10359,12 +10440,14 @@ export default function App() {
       const hunterLvl = player.hunterLevel ?? 0
       const a3d = player.avatar3d ? normalizeAvatar3d(player.avatar3d) : null
       const isSelected = selectedPlayerUidRef.current === npc.uid
+      const motionPose = otherPlayerMotionPoseRef.current.get(npc.uid) || 'static'
       // Chat/FX لە overlayـی جیا — لە sig دانەنراون تا ڕیفڕێش نەکەن
       const sig = [
         visualScale, player.gender, avatarUrl, hunterLvl,
         avatar3dSignature(a3d),
         moving === true ? '1' : '0',
         isSelected ? '1' : '0',
+        motionPose,
         playAppear ? `a${npc.appearAtMs}` : '0',
       ].join('|')
       if (existing && otherPlayerIconSigRef.current.get(npc.uid) === sig && !playAppear) {
@@ -10376,7 +10459,7 @@ export default function App() {
         className: 'avatar-marker-clean',
         html: buildOnlinePlayerMarkerHtml(
           npc.uid, avatarUrl, hunterLvl, null, null, null, null, null,
-          0, 0, null, player.gender, moving, undefined, a3d, isSelected, player.name,
+          0, 0, null, player.gender, moving, undefined, a3d, isSelected, player.name, motionPose,
         ),
         iconSize: PLAYER_MARKER_ICON_SIZE,
         iconAnchor: PLAYER_MARKER_ICON_ANCHOR,
@@ -10392,6 +10475,7 @@ export default function App() {
           const fxHtml = buildMapEffectOverlayHtml(npc.uid, mapAvatarOverlaysRef.current)
           patchMarkerChatOverlay(existing, chatHtml, npc.uid)
           patchMarkerFxOverlay(existing, fxHtml)
+          syncMapGlbAvatars(existing.getElement() || document)
         })
       } else {
         const marker = L.marker([npc.lat, npc.lng], {
@@ -10411,6 +10495,7 @@ export default function App() {
           const fxHtml = buildMapEffectOverlayHtml(npc.uid, mapAvatarOverlaysRef.current)
           patchMarkerChatOverlay(marker, chatHtml, npc.uid)
           patchMarkerFxOverlay(marker, fxHtml)
+          syncMapGlbAvatars(marker.getElement() || document)
         })
       }
     }
@@ -10753,86 +10838,23 @@ export default function App() {
         lastNpcPosSync = 0
       }
 
-      // ── Gift stagger (چات لە Global Chat Engine ـە) ──
+      // ── NPC دیاری/هێڵی فڕین کوژێنراوەتەوە (چات لە Global Chat Engine ـە) ──
       if (showOtherPlayersRef.current && now >= nextChatAt) {
         nextChatAt = now + nextNpcChatDelayMs(`nxt:${now}`)
-        const action = pickOneNpcAutoAction(npcLiveRef.current, now)
-        if (action?.type === 'gift') {
-            const fromNpc = npcLiveRef.current.find((n) => n.uid === action.fromUid)
-            const toNpc = npcLiveRef.current.find((n) => n.uid === action.toUid)
-            const npcItem = DONATE_BY_ID[action.itemId]
-            const goldCost = Math.max(0, Math.floor(action.goldCost ?? npcItem?.goldPrice ?? 0))
-            const diamondCost = Math.max(0, Math.floor(action.diamondCost ?? npcItem?.diamondPrice ?? 0))
-            if (
-              fromNpc
-              && (fromNpc.gold < goldCost || fromNpc.diamond < diamondCost)
-            ) {
-              // ناتوانێت ببەخشێت — دواتر دووبارە هەڵدەبژێردرێت
-            } else {
-            mapChatBubblesRef.current.set(action.fromUid, {
-              id: `npc_gift_${action.fromUid}_${now}`,
-              uid: action.fromUid,
-              text: action.text.slice(0, MAP_CHAT_MAX_LEN),
-              isPremium: true,
-              createdAtMs: now,
-              expiresAtMs: now + randomMapChatBubbleMs(),
-              hunterLevel: Math.max(0, Math.floor(Number(fromNpc?.hunterLevel) || 0)),
-            })
-            mapChatBubblesRef.current.set(action.toUid, {
-              id: `npc_gift_to_${action.toUid}_${now}`,
-              uid: action.toUid,
-              text: `${action.emoji} سوپاس ${action.fromName}!`.slice(0, MAP_CHAT_MAX_LEN),
-              isPremium: true,
-              createdAtMs: now + 1,
-              expiresAtMs: now + randomMapChatBubbleMs(),
-              hunterLevel: Math.max(0, Math.floor(Number(toNpc?.hunterLevel) || 0)),
-            })
-            queueChat(action.fromUid)
-            queueChat(action.toUid)
-            npcLiveRef.current = applyNpcGiftTransfer(
-              npcLiveRef.current,
-              action.fromUid,
-              action.toUid,
-              goldCost,
-              diamondCost,
-            )
-            npcLiveRef.current = applyNpcGiftXp(
-              npcLiveRef.current,
-              action.fromUid,
-              npcItem?.tier ?? 'basic',
-            )
-            if (fromNpc && npcItem) {
-              recordNpcGiftScore(
-                {
-                  uid: fromNpc.uid,
-                  name: fromNpc.name,
-                  gender: fromNpc.gender,
-                  avatarUrl: avatarForGender(fromNpc.gender),
-                  avatar3d: fromNpc.avatar3d,
-                  index: fromNpc.index,
-                  playerLevel: fromNpc.playerLevel,
-                },
-                donateItemValueScore(npcItem),
-              ).catch(() => {})
-            }
-            spawnDonateFxRef.current?.(
-              {
-                id: `npc_fx_${action.fromUid}_${action.toUid}_${now}`,
-                fromUid: action.fromUid,
-                toUid: action.toUid,
-                itemId: action.itemId,
-                emoji: action.emoji,
-                goldCost,
-                diamondCost,
-                fromLat: action.fromLat,
-                fromLng: action.fromLng,
-                toLat: action.toLat,
-                toLng: action.toLng,
-                startMs: now,
-              },
-              action.itemId,
-            )
-            }
+        // هەر هێڵ/دیاریی فەیک کە هێشتا لەسەر نەخشەیە بسڕەوە
+        const isFakeUid = (uid: string) => isNpcPlayerUid(uid) || isBotPlayerUid(uid)
+        if (donateFxRef.current.some((fx) =>
+          String(fx.eventId ?? '').startsWith('npc_fx_')
+          || (isFakeUid(fx.fromUid) && isFakeUid(fx.targetUid))
+        )) {
+          donateFxRef.current = donateFxRef.current.filter((fx) =>
+            !(String(fx.eventId ?? '').startsWith('npc_fx_')
+              || (isFakeUid(fx.fromUid) && isFakeUid(fx.targetUid))),
+          )
+          try {
+            const map = mapRef.current
+            if (map) refreshGiftTrajectoryPaths(map, donateFxRef.current)
+          } catch { /* ignore */ }
         }
       }
 
@@ -11883,15 +11905,214 @@ export default function App() {
 
   dismissAllOverlaysRef.current = dismissAllOverlays
 
-  const handleSendDonateItem = useCallback(async (targetUid: string, targetName: string, itemId: DonateItemId) => {
+  const stopScriptedMotion = useCallback(() => {
+    if (scriptedMotionRafRef.current != null) {
+      cancelAnimationFrame(scriptedMotionRafRef.current)
+      scriptedMotionRafRef.current = null
+    }
+    const prev = scriptedMotionRef.current
+    if (prev?.targetUid) {
+      otherPlayerMotionPoseRef.current.delete(prev.targetUid)
+      otherPlayerIconSigRef.current.delete(prev.targetUid)
+    }
+    scriptedMotionRef.current = null
+    scriptedDisplayPosRef.current = null
+    scriptedMotionPoseRef.current = 'stand_breathe'
+    selfMovingRef.current = false
+    selfIconSigRef.current = ''
+    updateUserMarkerIconRef.current()
+    refreshOtherPlayerIconsForZoom()
+    scheduleLayoutMapAvatars()
+  }, [scheduleLayoutMapAvatars, refreshOtherPlayerIconsForZoom])
+
+  const tickScriptedMotion = useCallback(() => {
+    const state = scriptedMotionRef.current
+    if (!state) {
+      scriptedMotionRafRef.current = null
+      return
+    }
+    const now = performance.now()
+    const elapsed = now - state.phaseStartedAt
+    const home = { lat: state.homeLat, lng: state.homeLng }
+    const approach = { lat: state.approachLat, lng: state.approachLng }
+    const contact = { lat: state.contactLat, lng: state.contactLng }
+    let pose = scriptedMotionPoseRef.current
+    let display = scriptedDisplayPosRef.current
+    const timeline = getMotionTimeline(state.motionId, state.leanSide)
+    const beats = timeline.beats
+
+    const applySenderPose = (nextPose: string) => {
+      pose = nextPose
+      if (userMarkerRef.current) {
+        if (!patchMarkerAvatarPose(userMarkerRef.current, nextPose)) {
+          // fallback: full icon rebuild
+          scriptedMotionPoseRef.current = nextPose
+          selfIconSigRef.current = ''
+          updateUserMarkerIconRef.current()
+        }
+      }
+    }
+
+    const applyTargetPose = (nextPose: string) => {
+      otherPlayerMotionPoseRef.current.set(state.targetUid, nextPose)
+      const targetMarker = otherPlayerMarkersRef.current.get(state.targetUid)
+      if (targetMarker) {
+        if (!patchMarkerAvatarPose(targetMarker, nextPose)) {
+          otherPlayerIconSigRef.current.delete(state.targetUid)
+          refreshOtherPlayerIconsForZoom()
+        }
+      } else {
+        otherPlayerIconSigRef.current.delete(state.targetUid)
+        refreshOtherPlayerIconsForZoom()
+      }
+    }
+
+    const spawnBeatFx = () => {
+      // بێ ئیمۆژی / کاردانەوە لەسەر کارەکتەر
+      if (state.impactSpawned) return
+      state.impactSpawned = true
+    }
+
+    if (state.phase === 'walk_to') {
+      const t = easeInOutCubic(elapsed / Math.max(1, state.walkToMs))
+      display = lerpGeo(home, approach, t)
+      pose = 'walk'
+      if (elapsed >= state.walkToMs) {
+        state.phase = 'act'
+        state.phaseStartedAt = now
+        state.beatIndex = 0
+        state.beatStartedAt = now
+        state.impactSpawned = false
+        display = approach
+        const first = beats[0]
+        pose = first?.pose ?? state.visualPose
+        if (userMarkerRef.current && (timeline.approachT >= 0.99)) {
+          try { userMarkerRef.current.setZIndexOffset(9000) } catch { /* ignore */ }
+        }
+        if (first) {
+          applySenderPose(first.pose)
+          if (first.actor !== 'sender' && first.targetPose) {
+            state.targetReacting = true
+            applyTargetPose(first.targetPose)
+          }
+          if (first.spawnFx) spawnBeatFx()
+        }
+      }
+    } else if (state.phase === 'act') {
+      const beat = beats[state.beatIndex]
+      if (!beat) {
+        state.phase = 'walk_back'
+        state.phaseStartedAt = now
+        pose = 'walk'
+        state.targetReacting = false
+        otherPlayerMotionPoseRef.current.delete(state.targetUid)
+        otherPlayerIconSigRef.current.delete(state.targetUid)
+        refreshOtherPlayerIconsForZoom()
+        if (userMarkerRef.current) {
+          try { patchMarkerFxOverlay(userMarkerRef.current, '') } catch { /* ignore */ }
+        }
+        const targetMarker = otherPlayerMarkersRef.current.get(state.targetUid)
+        if (targetMarker) {
+          try { patchMarkerFxOverlay(targetMarker, '') } catch { /* ignore */ }
+        }
+      } else {
+        const beatElapsed = now - state.beatStartedAt
+        display = beat.contact ? contact : approach
+        pose = beat.pose
+
+        if (beatElapsed >= beat.ms) {
+          const nextIndex = state.beatIndex + 1
+          if (nextIndex >= beats.length) {
+            state.phase = 'walk_back'
+            state.phaseStartedAt = now
+            pose = 'walk'
+            state.targetReacting = false
+            otherPlayerMotionPoseRef.current.delete(state.targetUid)
+            otherPlayerIconSigRef.current.delete(state.targetUid)
+            refreshOtherPlayerIconsForZoom()
+            if (userMarkerRef.current) {
+              try { patchMarkerFxOverlay(userMarkerRef.current, '') } catch { /* ignore */ }
+            }
+            const targetMarker = otherPlayerMarkersRef.current.get(state.targetUid)
+            if (targetMarker) {
+              try { patchMarkerFxOverlay(targetMarker, '') } catch { /* ignore */ }
+            }
+          } else {
+            state.beatIndex = nextIndex
+            state.beatStartedAt = now
+            const next = beats[nextIndex]!
+            applySenderPose(next.pose)
+            if (next.actor !== 'sender') {
+              state.targetReacting = true
+              applyTargetPose(next.targetPose || state.reactionId)
+            }
+            if (next.spawnFx) spawnBeatFx()
+            display = next.contact ? contact : approach
+            pose = next.pose
+          }
+        }
+      }
+    } else {
+      const t = easeInOutCubic(elapsed / Math.max(1, state.walkBackMs))
+      display = lerpGeo(approach, home, t)
+      pose = 'walk'
+      if (elapsed >= state.walkBackMs) {
+        otherPlayerMotionPoseRef.current.delete(state.targetUid)
+        otherPlayerIconSigRef.current.delete(state.targetUid)
+        scriptedMotionRef.current = null
+        scriptedDisplayPosRef.current = null
+        scriptedMotionPoseRef.current = 'stand_breathe'
+        selfMovingRef.current = false
+        scriptedMotionRafRef.current = null
+        selfIconSigRef.current = ''
+        if (userMarkerRef.current) {
+          try { patchMarkerFxOverlay(userMarkerRef.current, '') } catch { /* ignore */ }
+          try { userMarkerRef.current.setLatLng([home.lat, home.lng]) } catch { /* ignore */ }
+          try { userMarkerRef.current.setZIndexOffset(3600) } catch { /* ignore */ }
+        }
+        updateUserMarkerIconRef.current()
+        refreshOtherPlayerIconsForZoom()
+        scheduleLayoutMapAvatars()
+        return
+      }
+    }
+
+    scriptedDisplayPosRef.current = display
+    const poseChanged = scriptedMotionPoseRef.current !== pose
+    scriptedMotionPoseRef.current = pose
+    selfMovingRef.current = pose === 'walk'
+    if (userMarkerRef.current && display) {
+      try { userMarkerRef.current.setLatLng([display.lat, display.lng]) } catch { /* ignore */ }
+    }
+    // تەنها walk/static گۆڕانکاری گەورە — beatـەکان لە ڕێگەی patchAvatarPose
+    if (poseChanged && (pose === 'walk' || state.phase !== 'act')) {
+      if (state.phase === 'act') {
+        patchMarkerAvatarPose(userMarkerRef.current, pose)
+      } else {
+        selfIconSigRef.current = ''
+        updateUserMarkerIconRef.current()
+      }
+    }
+    scriptedMotionRafRef.current = requestAnimationFrame(tickScriptedMotion)
+  }, [scheduleLayoutMapAvatars, refreshOtherPlayerIconsForZoom])
+
+  const handleSendDonateItem = useCallback(async (targetUid: string, targetName: string, itemId: DonateItemId | MotionId | string) => {
 
     const myUid = userIdRef.current
 
     if (!myUid) return
 
-    const item = DONATE_ITEMS.find(d => d.id === itemId)
+    // جووڵەکانی نوێ — جێگەی دیاری
+    const motion = isMotionId(String(itemId)) ? MOTION_BY_ID[itemId as MotionId] : MOTION_ITEMS.find(m => m.id === itemId)
+    if (!motion) {
+      showGameAlert({ message: '❌ ئەم جووڵەیە نەدۆزرایەوە' })
+      return
+    }
 
-    if (!item) return
+    if (scriptedMotionRef.current) {
+      showGameAlert({ message: '⏳ چاوەڕوانی تەواوبوونی جووڵەی ئێستا بکە', tone: 'warn' })
+      return
+    }
 
     const target = onlinePlayersRef.current.get(targetUid)
 
@@ -11903,18 +12124,8 @@ export default function App() {
 
     }
 
-    if (!isNpcPlayerUid(targetUid) && !isBotPlayerUid(targetUid)) {
-      try {
-        const recipientProfile = await getUserPublicProfile(targetUid)
-        if (recipientProfile?.blockIncomingGifts === true) {
-          showGameAlert({ message: '🚫 ئەم یاریزانە وەرگرتنی دیاری داخستووە' })
-          return
-        }
-      } catch { /* fail-open on network error */ }
-    }
-
-    if (!canAffordDonateItem(walletRef.current, item)) {
-      const need = formatDonateCostLabel(item)
+    if (!canAffordMotion(walletRef.current, motion)) {
+      const need = formatMotionCostLabel(motion)
       showGameAlert({ message: `❌ باڵانس بەش ناکات — پێویستت بە ${need} هەیە`, tone: 'warn' })
       return
     }
@@ -11923,9 +12134,23 @@ export default function App() {
     const fromLng = userLngRef.current
     const toLat = target.lat
     const toLng = target.lng
+    const leanSide: MotionLeanSide = toLng >= fromLng ? 'r' : 'l'
+    const timeline = getMotionTimeline(motion.id, leanSide)
+    const approachT = timeline.approachT || getMotionApproachT(motion)
+    const approach = lerpGeo(
+      { lat: fromLat, lng: fromLng },
+      { lat: toLat, lng: toLng },
+      approachT,
+    )
+    const contact = lerpGeo(
+      { lat: fromLat, lng: fromLng },
+      { lat: toLat, lng: toLng },
+      Math.min(0.9995, approachT + 0.004),
+    )
     const now = Date.now()
-    const goldCost = item.goldPrice
-    const diamondCost = item.diamondPrice
+    const goldCost = motion.goldPrice
+    const diamondCost = motion.diamondPrice
+    const actMs = sumBeatMs(timeline.beats)
 
     setWalletAndSync(p => ({
       ...p,
@@ -11938,13 +12163,52 @@ export default function App() {
 
     setDonatePickerUid(null)
     setDonatePickerClosing(false)
+    setSelectedPlayer(null)
+    applyMapAvatarFocus(null)
+
+    const reactionId = MOTION_REACTION[motion.id]
+    const basePose = MOTION_VISUAL_POSE[motion.id]
+    const visualPose =
+      basePose === 'kiss' ? resolveKissVisualPose(leanSide) : basePose
+    const state: ScriptedMotionState = {
+      motionId: motion.id,
+      reactionId,
+      visualPose,
+      phase: 'walk_to',
+      homeLat: fromLat,
+      homeLng: fromLng,
+      approachLat: approach.lat,
+      approachLng: approach.lng,
+      contactLat: contact.lat,
+      contactLng: contact.lng,
+      phaseStartedAt: performance.now(),
+      walkToMs: MOTION_WALK_TO_MS,
+      actMs,
+      walkBackMs: MOTION_WALK_BACK_MS,
+      targetUid,
+      targetName,
+      targetReacting: false,
+      impactSpawned: false,
+      leanSide,
+      beatIndex: 0,
+      beatStartedAt: performance.now(),
+    }
+    scriptedMotionRef.current = state
+    scriptedDisplayPosRef.current = { lat: fromLat, lng: fromLng }
+    scriptedMotionPoseRef.current = 'walk'
+    selfMovingRef.current = true
+    selfIconSigRef.current = ''
+    updateUserMarkerIconRef.current()
+
+    if (scriptedMotionRafRef.current != null) cancelAnimationFrame(scriptedMotionRafRef.current)
+    scriptedMotionRafRef.current = requestAnimationFrame(tickScriptedMotion)
 
     try {
       const eventId = await realtimeSync.broadcastGift({
         fromUid: myUid,
         toUid: targetUid,
-        itemId: item.id,
-        emoji: item.emoji,
+        itemId: motion.id,
+        emoji: motion.emoji,
         goldCost,
         diamondCost,
         fromLat,
@@ -11953,32 +12217,10 @@ export default function App() {
         toLng,
         startMs: now,
       })
-
       processedDonationIdsRef.current.add(eventId)
 
-      spawnDonateFxFromEvent({
-        id: eventId,
-        fromUid: myUid,
-        toUid: targetUid,
-        itemId: item.id,
-        emoji: item.emoji,
-        goldCost,
-        diamondCost,
-        fromLat,
-        fromLng,
-        toLat,
-        toLng,
-        startMs: now,
-      }, item.id)
+      incrementGiftsSentScore(myUid, motionValueScore(motion)).catch(() => {})
 
-      // Ambient gifts play SFX inside spawn (shared with remote viewers)
-      if (!isAmbientMapGift(item.id)) {
-        playSoundEffect(sfxForDonateItem(item.id), 'gift')
-      }
-
-      incrementGiftsSentScore(myUid, donateItemValueScore(item)).catch(() => {})
-
-      // ٪٣٠ بۆ وەرگر — بۆ NPC/بۆت نێرەر دەینووسێت (وەرگری فەیک کلاینتی نییە)
       const cutGold = Math.max(0, Math.round(goldCost * GIFT_RECIPIENT_CUT_PCT))
       const cutDiamond = Math.max(0, Math.round(diamondCost * GIFT_RECIPIENT_CUT_PCT))
       if (cutGold > 0 || cutDiamond > 0) {
@@ -11986,35 +12228,39 @@ export default function App() {
           isNpcPlayerUid(targetUid) || isBotPlayerUid(targetUid)
         if (recipientNeedsSenderCredit) {
           creditGiftRevenueShare(targetUid, { gold: cutGold, diamond: cutDiamond }).catch((err) => {
-            console.error('NPC gift cut failed:', err)
+            console.error('NPC motion cut failed:', err)
           })
         }
       }
 
-      const cutHint = cutDiamond > 0
-        ? ` · ٪٣٠ → +${cutDiamond}💎 بۆ ${targetName}`
-        : cutGold > 0
-          ? ` · ٪٣٠ → +${cutGold}🪙 بۆ ${targetName}`
-          : ''
       showGameAlert({
-        message: `${item.emoji} ${item.label} بۆ ${targetName} نێردرا! (−${formatDonateCostLabel(item)})${cutHint}`,
+        message: `${motion.emoji} ${motion.label} بۆ ${targetName} — (−${formatMotionCostLabel(motion)})`,
         tone: 'success',
       })
 
-      logActivity('gift', `بەخشین — ${item.label} بۆ ${targetName}`, item.emoji || '🎁')
-
-      addXP(item.tier === 'vip' ? XP_REWARDS.giftVip : item.tier === 'mid' ? XP_REWARDS.giftMid : XP_REWARDS.giftBasic)
+      logActivity('gift', `جووڵە — ${motion.label} بۆ ${targetName}`, motion.emoji)
+      addXP(motion.tier === 'vip' ? XP_REWARDS.giftVip : motion.tier === 'mid' ? XP_REWARDS.giftMid : XP_REWARDS.giftBasic)
 
     } catch (err) {
+      stopScriptedMotion()
       setWalletAndSync(p => ({
         ...p,
         gold: p.gold + goldCost,
         diamond: p.diamond + diamondCost,
       }))
-      showGameAlert({ message: err instanceof Error ? err.message : '❌ نەتوانرا بەخشینەکە بنێردرێت' })
+      showGameAlert({ message: err instanceof Error ? err.message : '❌ نەتوانرا جووڵەکە دەستپێبکرێت' })
     }
 
-  }, [showGameAlert, setWalletAndSync, spawnDonateFxFromEvent, addXP, logActivity])
+  }, [showGameAlert, setWalletAndSync, addXP, logActivity, tickScriptedMotion, stopScriptedMotion, applyMapAvatarFocus])
+
+  useEffect(() => {
+    return () => {
+      if (scriptedMotionRafRef.current != null) {
+        cancelAnimationFrame(scriptedMotionRafRef.current)
+        scriptedMotionRafRef.current = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
 
@@ -12102,6 +12348,19 @@ export default function App() {
       // Block Incoming Gifts — وەرگر دیاری نابینێت / ئاگاداری وەرناگرێت
       if (myUid && event.toUid === myUid && blockIncomingGiftsRef.current) return
 
+      // جووڵە — بێ FXی فڕینی دیاری
+      if (isMotionId(event.itemId)) {
+        const motion = MOTION_BY_ID[event.itemId]
+        if (myUid && event.toUid === myUid) {
+          registerRecipientGiftArrival(event, 'heart')
+          showGameAlert({
+            message: `${motion.emoji} ${event.fromUid === myUid ? '' : ''}${motion.label}ـت بۆ نێردرا!`,
+            tone: 'success',
+          })
+        }
+        return
+      }
+
       const itemId = (DONATE_ITEMS.find(d => d.id === event.itemId)?.id ?? 'tomato') as DonateItemId
 
       // Queue recipient reward for impact moment (not on send)
@@ -12111,7 +12370,7 @@ export default function App() {
 
     })
 
-  }, [mapReady, authUserId, spawnDonateFxFromEvent, registerRecipientGiftArrival])
+  }, [mapReady, authUserId, spawnDonateFxFromEvent, registerRecipientGiftArrival, showGameAlert])
 
   // Socket.io real-time map (server/index.js) — join_map / move / gifts / chat / xp
   useEffect(() => {
@@ -12228,6 +12487,12 @@ export default function App() {
         processedDonationIdsRef.current.add(donation.id)
         const myUid = userIdRef.current
         if (myUid && donation.toUid === myUid && blockIncomingGiftsRef.current) return
+        if (isMotionId(donation.itemId)) {
+          if (myUid && donation.toUid === myUid) {
+            registerRecipientGiftArrival(donation, 'heart')
+          }
+          return
+        }
         const itemId = (DONATE_ITEMS.find(d => d.id === donation.itemId)?.id ?? 'tomato') as DonateItemId
         registerRecipientGiftArrival(donation, itemId)
         spawnDonateFxFromEvent(donation, itemId)
@@ -13755,6 +14020,7 @@ export default function App() {
     royalLbTab,
     runPlayerAction,
     saveAvatarStudio,
+    setAvatarStudioGender,
     scheduleLayoutMapAvatars,
     seasonPass,
     seasonPassRef,

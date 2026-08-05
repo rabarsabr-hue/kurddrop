@@ -1172,6 +1172,251 @@ body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 
+.kd-motion-act-fx {
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  transform: translateX(-50%);
+  font-size: 22px;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55));
+  animation: kd-motion-act-pop 0.45s ease-out;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.kd-motion-act-fx--recv {
+  top: -14px;
+  font-size: 18px;
+  opacity: 0.9;
+}
+
+@keyframes kd-motion-act-pop {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.6); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+/* —— Motion Impact FX (stars / ring / hearts / dust / …) —— */
+.kd-motion-impact {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 72px;
+  height: 72px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 6;
+  overflow: visible;
+}
+
+.kd-motion-impact--sender { top: -6px; }
+.kd-motion-impact--target { top: -18px; }
+
+.kd-motion-impact .kd-mi-star,
+.kd-motion-impact .kd-mi-spark,
+.kd-motion-impact .kd-mi-heart,
+.kd-motion-impact .kd-mi-note,
+.kd-motion-impact .kd-mi-ring {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  font-size: 16px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
+  will-change: transform, opacity;
+}
+
+.kd-motion-impact .kd-mi-flash {
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 220, 0.95) 0%, rgba(255, 200, 80, 0.35) 45%, transparent 70%);
+  animation: kd-mi-flash 0.45s ease-out forwards;
+}
+
+.kd-motion-impact .kd-mi-flash--soft {
+  background: radial-gradient(circle, rgba(210, 190, 150, 0.7) 0%, transparent 70%);
+}
+
+@keyframes kd-mi-flash {
+  0% { opacity: 0; transform: scale(0.4); }
+  35% { opacity: 1; transform: scale(1.35); }
+  100% { opacity: 0; transform: scale(1.8); }
+}
+
+/* Stars — dizzy punch hit */
+.kd-motion-impact--stars .kd-mi-s1 { animation: kd-mi-orbit 1.4s ease-out forwards; animation-delay: 0s; }
+.kd-motion-impact--stars .kd-mi-s2 { animation: kd-mi-orbit 1.4s ease-out forwards; animation-delay: 0.08s; font-size: 13px; }
+.kd-motion-impact--stars .kd-mi-s3 { animation: kd-mi-orbit 1.4s ease-out forwards; animation-delay: 0.16s; font-size: 12px; }
+.kd-motion-impact--stars .kd-mi-s4 { animation: kd-mi-orbit 1.4s ease-out forwards; animation-delay: 0.24s; font-size: 14px; }
+
+@keyframes kd-mi-orbit {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(0deg) translateX(0) scale(0.5); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(320deg) translateX(22px) translateY(-18px) scale(1.1); }
+}
+
+.kd-motion-impact--stars.kd-motion-impact--target {
+  animation: kd-mi-hit-shake 0.55s ease-out;
+}
+
+@keyframes kd-mi-hit-shake {
+  0%, 100% { margin-left: 0; }
+  20% { margin-left: 5px; }
+  40% { margin-left: -5px; }
+  60% { margin-left: 3px; }
+  80% { margin-left: -2px; }
+}
+
+/* Ring sparkle — propose */
+.kd-motion-impact--ring .kd-mi-ring {
+  font-size: 26px;
+  top: 48%;
+  animation: kd-mi-ring-pop 1.8s ease-out forwards;
+}
+.kd-motion-impact--ring .kd-mi-sp1 { animation: kd-mi-sparkle 1.6s ease-out forwards; animation-delay: 0.15s; }
+.kd-motion-impact--ring .kd-mi-sp2 { animation: kd-mi-sparkle 1.6s ease-out forwards; animation-delay: 0.35s; left: 28%; }
+.kd-motion-impact--ring .kd-mi-sp3 { animation: kd-mi-sparkle 1.6s ease-out forwards; animation-delay: 0.5s; left: 72%; font-size: 12px; }
+
+@keyframes kd-mi-ring-pop {
+  0% { opacity: 0; transform: translate(-50%, -30%) scale(0.3) rotate(-20deg); }
+  30% { opacity: 1; transform: translate(-50%, -60%) scale(1.15) rotate(8deg); }
+  55% { transform: translate(-50%, -55%) scale(1) rotate(-4deg); }
+  100% { opacity: 0.85; transform: translate(-50%, -50%) scale(1.05) rotate(0deg); }
+}
+
+@keyframes kd-mi-sparkle {
+  0% { opacity: 0; transform: translate(-50%, 0) scale(0.4); }
+  40% { opacity: 1; transform: translate(-50%, -18px) scale(1.2); }
+  100% { opacity: 0; transform: translate(-50%, -32px) scale(0.7); }
+}
+
+/* Hearts */
+.kd-motion-impact--hearts .kd-mi-h1 { animation: kd-mi-float-up 1.5s ease-out forwards; left: 35%; }
+.kd-motion-impact--hearts .kd-mi-h2 { animation: kd-mi-float-up 1.5s ease-out forwards; animation-delay: 0.12s; left: 55%; font-size: 14px; }
+.kd-motion-impact--hearts .kd-mi-h3 { animation: kd-mi-float-up 1.5s ease-out forwards; animation-delay: 0.24s; left: 70%; font-size: 12px; }
+
+@keyframes kd-mi-float-up {
+  0% { opacity: 0; transform: translate(-50%, 8px) scale(0.5); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -36px) scale(1.1); }
+}
+
+/* Dust */
+.kd-motion-impact--dust .kd-mi-dust {
+  position: absolute;
+  left: 50%;
+  top: 70%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: rgba(180, 150, 100, 0.55);
+  animation: kd-mi-dust 0.9s ease-out forwards;
+}
+.kd-motion-impact--dust .kd-mi-d1 { animation-delay: 0s; }
+.kd-motion-impact--dust .kd-mi-d2 { left: 35%; width: 7px; height: 7px; animation-delay: 0.06s; }
+.kd-motion-impact--dust .kd-mi-d3 { left: 65%; width: 8px; height: 8px; animation-delay: 0.1s; }
+
+@keyframes kd-mi-dust {
+  0% { opacity: 0.9; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-18px) scale(1.8); }
+}
+
+/* Sparkle / notes / clap */
+.kd-motion-impact--sparkle .kd-mi-sp1 { animation: kd-mi-sparkle 1.2s ease-out forwards; }
+.kd-motion-impact--sparkle .kd-mi-sp2 { animation: kd-mi-sparkle 1.2s ease-out forwards; animation-delay: 0.2s; left: 65%; }
+
+.kd-motion-impact--notes .kd-mi-n1 { animation: kd-mi-float-up 1.6s ease-out forwards; left: 30%; }
+.kd-motion-impact--notes .kd-mi-n2 { animation: kd-mi-float-up 1.6s ease-out forwards; animation-delay: 0.15s; left: 55%; }
+.kd-motion-impact--notes .kd-mi-n3 { animation: kd-mi-float-up 1.6s ease-out forwards; animation-delay: 0.3s; left: 75%; font-size: 14px; }
+
+.kd-motion-impact--clap .kd-mi-sp1 { animation: kd-mi-sparkle 0.9s ease-out forwards; }
+
+/* Cheek kiss — ماچی ڕوومەت (ڕوون و ئاشکرا) */
+.kd-motion-impact--cheek-kiss {
+  width: 80px;
+  height: 90px;
+  top: -4px;
+  overflow: visible;
+}
+.kd-motion-impact--cheek-kiss.kd-motion-impact--sender {
+  top: 2px;
+}
+.kd-motion-impact--cheek-kiss .kd-mi-kiss-pucker {
+  position: absolute;
+  top: 18%;
+  font-size: 20px;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.5));
+  animation: kd-mi-pucker 1.4s ease-out forwards;
+}
+.kd-motion-impact--cheek-kiss.kd-motion-impact--cheek-r .kd-mi-kiss-pucker {
+  left: 78%;
+}
+.kd-motion-impact--cheek-kiss.kd-motion-impact--cheek-l .kd-mi-kiss-pucker {
+  left: 22%;
+}
+.kd-motion-impact--cheek-kiss .kd-mi-lipstick {
+  position: absolute;
+  top: 14%;
+  font-size: 28px;
+  z-index: 2;
+  filter: drop-shadow(0 2px 6px rgba(180, 40, 80, 0.55));
+  animation: kd-mi-lipstick-stamp 1.6s ease-out forwards;
+}
+.kd-motion-impact--cheek-kiss.kd-motion-impact--cheek-r .kd-mi-lipstick {
+  left: 72%;
+}
+.kd-motion-impact--cheek-kiss.kd-motion-impact--cheek-l .kd-mi-lipstick {
+  left: 28%;
+}
+.kd-motion-impact--cheek-kiss .kd-mi-cheek-blush {
+  position: absolute;
+  top: 16%;
+  width: 22px;
+  height: 18px;
+  margin-left: -11px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 110, 140, 0.75) 0%, rgba(255, 80, 120, 0.25) 55%, transparent 75%);
+  animation: kd-mi-blush 1.8s ease-out forwards;
+}
+.kd-motion-impact--cheek-kiss.kd-motion-impact--cheek-r .kd-mi-cheek-blush {
+  left: 72%;
+}
+.kd-motion-impact--cheek-kiss.kd-motion-impact--cheek-l .kd-mi-cheek-blush {
+  left: 28%;
+}
+.kd-motion-impact--cheek-kiss .kd-mi-h1 {
+  top: 8%;
+  font-size: 14px;
+  animation: kd-mi-float-up 1.5s ease-out forwards;
+  animation-delay: 0.25s;
+}
+.kd-motion-impact--cheek-kiss.kd-motion-impact--cheek-r .kd-mi-h1 { left: 88%; }
+.kd-motion-impact--cheek-kiss.kd-motion-impact--cheek-l .kd-mi-h1 { left: 12%; }
+
+@keyframes kd-mi-pucker {
+  0% { opacity: 0; transform: translate(-50%, 6px) scale(0.4); }
+  35% { opacity: 1; transform: translate(-50%, 0) scale(1.15); }
+  70% { opacity: 1; transform: translate(-50%, -2px) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -8px) scale(0.85); }
+}
+
+@keyframes kd-mi-lipstick-stamp {
+  0% { opacity: 0; transform: translate(-50%, 10px) scale(0.2) rotate(-25deg); }
+  25% { opacity: 1; transform: translate(-50%, 0) scale(1.35) rotate(8deg); }
+  45% { transform: translate(-50%, 0) scale(1.05) rotate(-4deg); }
+  100% { opacity: 0.95; transform: translate(-50%, 0) scale(1) rotate(0deg); }
+}
+
+@keyframes kd-mi-blush {
+  0% { opacity: 0; transform: scale(0.5); }
+  40% { opacity: 1; transform: scale(1.2); }
+  100% { opacity: 0.7; transform: scale(1); }
+}
+
 .kd-donate-picker-btn .kd-donate-price {
   color: #FFD700 !important;
   font-weight: 900;

@@ -37,6 +37,13 @@ import {
 } from './data/gifts'
 
 import {
+  MOTION_ITEMS,
+  canAffordMotion,
+  formatMotionCostLabel,
+  type MotionId,
+} from './data/motions'
+
+import {
   flushBatchedMapOverlays,
   markAvatarAppearFade,
   markAvatarDisappearFade,
@@ -747,6 +754,7 @@ export default function AppView(s: Record<string, any>) {
     royalLbTab,
     runPlayerAction,
     saveAvatarStudio,
+    setAvatarStudioGender,
     scheduleLayoutMapAvatars,
     seasonPass,
     seasonPassRef,
@@ -3548,6 +3556,7 @@ export default function AppView(s: Record<string, any>) {
                           avatarUrl={userProfile?.avatarUrl ?? null}
                           onCam={setAvatarStudioCam}
                           onChange={setAvatarStudioDraft}
+                          onGenderChange={(g) => { void setAvatarStudioGender(g) }}
                           onClose={() => setShowAvatarStudio(false)}
                           onSave={() => { void saveAvatarStudio() }}
                         />
@@ -6559,7 +6568,7 @@ export default function AppView(s: Record<string, any>) {
 
             { key: 'steal', label: 'دزین', icon: 'lock_open', color: '#e879f9', disabled: isBotPlayer || selectedPlayer.isSelf || (stealCooldownUntilMs > Date.now()), action: () => handleStealMoneyFromPlayer(sheetUid, sheetName) },
 
-            { key: 'donate', label: 'ببەخشە', icon: 'volunteer_activism', color: '#f472b6', disabled: isBotPlayer || selectedPlayer.isSelf, action: () => { if (donatePickerUid === sheetUid || donatePickerClosing) { softCloseDonatePicker() } else { setDonatePickerClosing(false); setDonatePickerUid(sheetUid) } } },
+            { key: 'donate', label: 'جووڵە', icon: 'directions_run', color: '#f472b6', disabled: isBotPlayer || selectedPlayer.isSelf, action: () => { if (donatePickerUid === sheetUid || donatePickerClosing) { softCloseDonatePicker() } else { setDonatePickerClosing(false); setDonatePickerUid(sheetUid) } } },
 
             { key: 'block', label: 'بلۆک', icon: 'block', color: '#f87171', disabled: isBotPlayer, action: () => handleBlockPlayer(sheetUid, sheetName) },
 
@@ -6580,7 +6589,7 @@ export default function AppView(s: Record<string, any>) {
               return `⏳ Cooldownی دزی — ${leftMin} خولەک ماوە`
             }
 
-            if (btn.key === 'donate' && selectedPlayer.isSelf) return 'ناتوانیت بۆ خۆت دیاری بنێریت'
+            if (btn.key === 'donate' && selectedPlayer.isSelf) return 'ناتوانیت بۆ خۆت جووڵە بنێریت'
 
             return null
 
@@ -6758,9 +6767,9 @@ export default function AppView(s: Record<string, any>) {
 
                   className="kd-player-focus-drag-bar"
 
-                  aria-label="داخستنی بەخشین"
+                  aria-label="داخستنی جووڵە"
 
-                  title="داخستنی بەخشین"
+                  title="داخستنی جووڵە"
 
                   onClick={e => {
 
@@ -6956,13 +6965,13 @@ export default function AppView(s: Record<string, any>) {
                   >
 
                     <div className="kd-donate-picker-title">
-                      هەڵبژاردنی دیاری بۆ {sheetName}
+                      هەڵبژاردنی جووڵە بۆ {sheetName}
                     </div>
 
                     <div className="kd-donate-picker">
 
-                      {DONATE_ITEMS.map(dItem => {
-                        const canAfford = canAffordDonateItem(wallet, dItem)
+                      {MOTION_ITEMS.map(dItem => {
+                        const canAfford = canAffordMotion(wallet, dItem)
                         const priceTone = !canAfford
                           ? ' is-muted'
                           : dItem.diamondPrice > 0
@@ -6983,7 +6992,7 @@ export default function AppView(s: Record<string, any>) {
 
                             if (donatePickerClosing || !canAfford) return
 
-                            handleSendDonateItem(sheetUid, sheetName, dItem.id)
+                            handleSendDonateItem(sheetUid, sheetName, dItem.id as MotionId)
 
                           })}
 

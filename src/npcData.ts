@@ -1,5 +1,5 @@
 /**
- * ٥ کارەکتەری چالاک — هەولێر، وەک یاریزانی ڕاستەقینە:
+ * ٢٠ کارەکتەری چالاک — ١٠ نێر + ١٠ مێ لە هەولێر، وەک یاریزانی ڕاستەقینە:
  * ئۆنلاین/ئۆفلاین، دیاری ڕۆژانە، چەرخی بەخت، بەخشین بە نرخ، sync بۆ Firestore
  */
 
@@ -48,7 +48,8 @@ export type { NpcDialect }
 export { NPC_COMEDY_MESSAGES, PUBLIC_CHAT_ONE_LINERS }
 
 export const NPC_UID_PREFIX = 'kd_npc_'
-export const NPC_COUNT = 5
+/** ٢٠ کەسایەتی فەیک — ١٠ نێر + ١٠ مێ */
+export const NPC_COUNT = 20
 export const NPC_TOTAL = NPC_COUNT
 /** کەمترین مەودا ٣٫٥کم — دوورتر بۆ ئەوەی تێکەڵ نەبن */
 export const NPC_MIN_SEPARATION_M = 3500
@@ -70,18 +71,28 @@ export const NPC_DROP_CLAIM_M = 90
 /** کەمترین/زۆرترین گۆڕانی ئۆنلاین لە یەک tick (بۆ نەرمێتی) */
 export const NPC_PRESENCE_FLIP_MIN = 1
 export const NPC_PRESENCE_FLIP_MAX = 4
-/** ماوەی fade-in کاتێک دێتە سەر خەت */
-export const NPC_APPEAR_FADE_MS = 900
+/** ماوەی fade-in — ٠ بۆ دەرکەوتنی دەستبەجێ لەگەڵ نەخشە */
+export const NPC_APPEAR_FADE_MS = 0
 /** ماوەی fade-out پێش گۆڕینی شوێن */
-export const NPC_FADE_OUT_MS = 900
-/** لە دەستپێکدا ~٪٧٠ ئۆنلاین — وەک یاریزانی ڕاستەقینە */
-export const NPC_INITIAL_ONLINE_RATIO = 0.7
+export const NPC_FADE_OUT_MS = 400
+/** هەموو ٢٠ لە دەستپێکدا ئۆنلاین — دەستبەجێ لەسەر نەخشە */
+export const NPC_INITIAL_ONLINE_RATIO = 1
 /** Relocation کوژاوە — شوێن جێگیر دەمێنێتەوە */
 export const NPC_RELOCATE_RATIO = 0
 /** ماوەی نێوان شەپۆلەکانی گۆڕینی شوێن (ناچالاک) */
 export const NPC_RELOCATE_INTERVAL_MS = 600_000
 /** ماوەی syncـی گشتی بۆ Firestore */
 export const NPC_FIRESTORE_SYNC_MS = 60_000
+
+/** ١٠ ناوی نێر + ١٠ ناوی مێ بۆ ٢٠ کەسایەتی */
+const NPC_MALE_NAMES = [
+  'ئاریان', 'کاروان', 'ڕێبوار', 'شێرزاد', 'دانا',
+  'هەردی', 'بەرزان', 'سۆران', 'کۆڤان', 'ئازاد',
+] as const
+const NPC_FEMALE_NAMES = [
+  'ژینۆ', 'لانی', 'سۆنیا', 'نیان', 'تارا',
+  'دیلان', 'ڕۆژین', 'ئاڤین', 'ژیلان', 'هێلین',
+] as const
 
 export type NpcHubKind = 'city' | 'village' | 'road'
 
@@ -606,10 +617,13 @@ function buildAvatar3d(index: number, gender: Gender): Avatar3DCustomization {
 }
 
 function uniqueNpcName(index: number): { name: string; gender: Gender } {
-  const base = NPC_FIRST_NAMES[index % NPC_FIRST_NAMES.length]!
-  const cycle = Math.floor(index / NPC_FIRST_NAMES.length)
-  if (cycle === 0) return { name: base.name, gender: base.gender }
-  return { name: `${base.name} ${cycle + 1}`, gender: base.gender }
+  // ٠–٩ نێر · ١٠–١٩ مێ (٢٠ کەسایەتی)
+  if (index < 10) {
+    const name = NPC_MALE_NAMES[index % NPC_MALE_NAMES.length]!
+    return { name, gender: 'male' }
+  }
+  const fi = (index - 10) % NPC_FEMALE_NAMES.length
+  return { name: NPC_FEMALE_NAMES[fi]!, gender: 'female' }
 }
 
 function withPlace(template: string, place: string): string {
@@ -826,8 +840,9 @@ export function createInitialNpcStates(count = NPC_COUNT): LiveNpcState[] {
       onlineUntilMs: isOnline
         ? boot + randomSessionDurationMs(sessionSeed)
         : boot + randomOfflineDurationMs(`init-off:${i}`),
-      lastSeenMs: boot - Math.floor(hashUnit(`seen:${i}`) * 3_600_000),
-      appearAtMs: isOnline ? boot : 0,
+      lastSeenMs: boot,
+      // دەستبەجێ ئامادە — بێ چاوەڕوانی fade
+      appearAtMs: isOnline ? boot - 10_000 : 0,
       disappearAtMs: 0,
       dailyBonusDay: 1,
       dailyBonusLastClaimMs: null,
@@ -1190,32 +1205,7 @@ export function pickOneNpcAutoAction(
   const pool = npcs.filter((n) => n.isOnline && n.interactive)
   if (pool.length === 0) return null
   const pick = pool[Math.floor(hashUnit(`act1:${now}`) * pool.length) % pool.length]!
-  const doGift = hashUnit(`gift1:${now}:${pick.uid}`) < 0.55 && pool.length > 1
-  if (doGift) {
-    let other = pool[Math.floor(hashUnit(`to1:${now}:${pick.uid}`) * pool.length) % pool.length]!
-    if (other.uid === pick.uid) {
-      other = pool[(pool.indexOf(pick) + 1) % pool.length]!
-    }
-    const gift = pickAffordableDonateItem(pick, now)
-    if (gift) {
-      return {
-        type: 'gift',
-        fromUid: pick.uid,
-        fromName: pick.name,
-        toUid: other.uid,
-        toName: other.name,
-        fromLat: pick.lat,
-        fromLng: pick.lng,
-        toLat: other.lat,
-        toLng: other.lng,
-        itemId: gift.id,
-        emoji: gift.emoji,
-        goldCost: gift.goldPrice,
-        diamondCost: gift.diamondPrice,
-        text: `${gift.emoji} ${gift.label}م نارد بۆ ${other.name}!`.slice(0, NPC_CHAT_MAX_LEN),
-      }
-    }
-  }
+  // دیاری/هێڵی فڕین لە نێوان فەیکەکان کوژێنراوەتەوە — تەنها چات
   return {
     type: 'chat',
     uid: pick.uid,
