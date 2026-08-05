@@ -1823,10 +1823,17 @@ export function createMapThemeTileLayer(theme: MapThemeId): L.TileLayer {
 export function clearLocalPlayerEconomyData(uid?: string | null) {
   if (typeof localStorage === 'undefined') return
   try {
+    const preserveIdentity = (key: string) =>
+      key === 'kd_reg_intent'
+      || key === 'kd_pending_reg_profile'
+      || key === 'kd_auth_last_uid'
+      || key.startsWith('kd_locked_identity_')
+      || key.startsWith('kd_reg_')
     const toRemove: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
       if (!key) continue
+      if (preserveIdentity(key)) continue
       const hit =
         key.startsWith('kd_')
         || key.startsWith('user_data_')

@@ -2,12 +2,23 @@ import { defineConfig, normalizePath, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createRequire } from 'node:module'
 import { builtinModules } from 'node:module'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** Project lives on Google Drive; deps stay on local NTFS. */
-const PROJECT_ROOT = normalizePath('G:/My Drive/Kurd Drop')
-const DEPS_ROOT = path.dirname(fileURLToPath(import.meta.url))
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+function detectProjectRoot(): string {
+  if (process.env.KD_PROJECT_ROOT) return normalizePath(process.env.KD_PROJECT_ROOT)
+  if (fs.existsSync(path.join(HERE, 'src', 'main.tsx'))) return normalizePath(HERE)
+  const driveFallback = 'G:/My Drive/Kurd Drop'
+  if (fs.existsSync(path.join(driveFallback, 'src', 'main.tsx'))) return normalizePath(driveFallback)
+  return normalizePath(HERE)
+}
+const PROJECT_ROOT = detectProjectRoot()
+const DEPS_ROOT = process.env.KD_DEPS_ROOT
+  ? normalizePath(process.env.KD_DEPS_ROOT)
+  : (fs.existsSync(path.join(HERE, 'node_modules', 'vite')) ? normalizePath(HERE) : PROJECT_ROOT)
 const LOCAL_NM = path.join(DEPS_ROOT, 'node_modules')
 const SRC = path.join(PROJECT_ROOT, 'src')
 const localRequire = createRequire(path.join(DEPS_ROOT, 'package.json'))
@@ -71,7 +82,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5174,
-    strictPort: false,
+    strictPort: true,
     allowedHosts: true,
     cors: true,
     fs: {

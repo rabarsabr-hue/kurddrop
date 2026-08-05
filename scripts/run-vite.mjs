@@ -28,11 +28,19 @@ Run once:
   process.exit(1)
 }
 
-// Keep deps package.json in sync with the project
+// Keep deps package.json + vite config in sync with the project
 try {
   fs.copyFileSync(projectPkg, path.join(depsRoot, 'package.json'))
 } catch {
   /* ignore */
+}
+const projectViteLocal = path.join(projectRoot, 'vite.local.config.ts')
+if (fs.existsSync(projectViteLocal)) {
+  try {
+    fs.copyFileSync(projectViteLocal, viteConfig)
+  } catch {
+    /* ignore */
+  }
 }
 
 const npmArgs =
@@ -46,7 +54,11 @@ const child = spawn('npm', ['--prefix', depsRoot, ...npmArgs], {
   cwd: projectRoot,
   stdio: 'inherit',
   shell: true,
-  env: process.env,
+  env: {
+    ...process.env,
+    KD_PROJECT_ROOT: projectRoot,
+    KD_DEPS_ROOT: depsRoot,
+  },
 })
 
 child.on('exit', (code) => process.exit(code ?? 1))

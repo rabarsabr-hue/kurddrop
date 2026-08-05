@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "node ./scripts/run-vite.mjs dev",
-    "dev:lan": "node ./scripts/run-vite.mjs dev --host",
+    "dev:lan": "node ./scripts/run-vite.mjs dev --host 0.0.0.0 --port 5174",
     "dev:server": "npm --prefix server run dev",
     "server": "npm --prefix server start",
-    "build": "node ./scripts/run-vite.mjs build",
+    "build": "tsc -b && vite build",
+    "build:local": "node ./scripts/run-vite.mjs build",
     "lint": "eslint .",
-    "preview": "node ./scripts/run-vite.mjs preview",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "preview:local": "node ./scripts/run-vite.mjs preview",
     "allow-lan": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/allow-lan-firewall.ps1",
     "deps:install": "node ./scripts/setup-deps.mjs",
     "deps:setup": "node ./scripts/setup-deps.mjs"

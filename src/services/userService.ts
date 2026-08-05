@@ -2232,12 +2232,16 @@ export async function factoryResetAllCharacters(): Promise<{ resetUsers: number;
       const playerId = typeof data.playerId === 'string' ? data.playerId : ''
       const username = typeof data.username === 'string' ? data.username : ''
       const email = typeof data.email === 'string' ? data.email : ''
+      const phone = typeof data.phone === 'string' ? data.phone : ''
 
       batch.set(doc(db, 'users', uid), {
         uid,
-        name: typeof data.name === 'string' && data.name.trim() ? data.name.trim() : 'یاریزان',
+        name: typeof data.name === 'string' && data.name.trim() && data.name.trim() !== 'یاریزان'
+          ? data.name.trim()
+          : (username || (typeof data.name === 'string' ? data.name.trim() : '') || 'یاریزان'),
         username,
         email,
+        phone,
         gender,
         ...wallet,
         isPremium: false,

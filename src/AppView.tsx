@@ -3262,7 +3262,7 @@ export default function AppView(s: Record<string, any>) {
                           </button>
 
                           {[
-                            { label: 'ناوی تەواو', value: (playerFullName || userProfile?.name || '').trim() || '—', editable: false },
+                            { label: 'ناوی تەواو', value: (playerFullName || userProfile?.name || '').trim() && (playerFullName || userProfile?.name) !== 'یاریزان' ? (playerFullName || userProfile?.name || '').trim() : ((userProfile?.username || '').trim() || '—'), editable: false },
                             {
                               label: 'یوزەرنەیمی یاری',
                               value: userProfile?.username ? `@${userProfile.username}` : '—',
@@ -3283,14 +3283,14 @@ export default function AppView(s: Record<string, any>) {
                             },
                             {
                               label: 'ئیمەیڵ',
-                              value: userProfile?.email || '—',
+                              value: (userProfile?.email || '').trim() || '—',
                               editable: !userProfile?.emailEditUsed,
                               onEdit: handleEditEmailOnce,
                               used: userProfile?.emailEditUsed === true,
                             },
                             {
                               label: 'ژمارەی مۆبایل',
-                              value: userProfile?.phone || '—',
+                              value: (userProfile?.phone || '').trim() || '—',
                               editable: !userProfile?.phoneEditUsed,
                               onEdit: handleEditPhoneOnce,
                               used: userProfile?.phoneEditUsed === true,

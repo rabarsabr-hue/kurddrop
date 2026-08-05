@@ -80,10 +80,17 @@ function resolveSocketUrl(): string {
   const envUrl = (import.meta as { env?: { VITE_SOCKET_URL?: string } }).env?.VITE_SOCKET_URL
   if (envUrl && String(envUrl).trim()) return String(envUrl).trim().replace(/\/$/, '')
   if (typeof window !== 'undefined' && window.location.hostname) {
-    // Dev (Vite :5173/:5174): same-origin so /socket.io proxy works on LAN phones
-    // (phone only needs the Vite port — no direct :3001 firewall hole required).
-    if (window.location.port === '5173' || window.location.port === '5174') {
-      return window.location.origin
+    // Dev / LAN: same-origin so Vite `/socket.io` proxy works on phones via IP
+    // (phone only needs the Vite port — no direct :3001 firewall hole).
+    const { hostname, port, protocol, origin } = window.location
+    const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1'
+    const isPrivateLan =
+      /^192\.168\.\d+\.\d+$/.test(hostname)
+      || /^10\.\d+\.\d+\.\d+$/.test(hostname)
+      || /^172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+$/.test(hostname)
+    const isViteDevPort = port === '5173' || port === '5174' || port === ''
+    if (import.meta.env.DEV || isViteDevPort || isPrivateLan || (isLocalHost && protocol === 'http:')) {
+      return origin
     }
   }
   return 'http://localhost:3001'

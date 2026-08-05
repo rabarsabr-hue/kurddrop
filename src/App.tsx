@@ -2586,7 +2586,6 @@ export default function App() {
     })
 
     void title
-    void displayName
 
     const frame = fullBody
 
@@ -2600,6 +2599,11 @@ export default function App() {
     const footRing = fullBody ? '' : buildMapFootRingHtml(hunterLevel)
 
     const fx = buildPlayerFxOverlayHtml(smokeUntilMs, duelFxUntilMs, activeDuelId)
+
+    const showName = showPlayerNamesRef.current && Boolean(displayName && String(displayName).trim())
+    const nameHtml = showName
+      ? `<div class="kd-map-player-name" aria-hidden="true">${escapeHtml(String(displayName).trim())}</div>`
+      : ''
 
     // Chat + gift FX لە توێی overlayـی جیا — بێ ڕیفڕێشی ئاڤاتار
     const visualBottom = fullBody ? -underFeet : 0
@@ -2624,6 +2628,8 @@ export default function App() {
        <div class="map-avatar-visual${selectedClass}" style="--vs:${visualScale};position:absolute;left:50%;bottom:${visualBottom}px;margin:0;transform:${visualXf};transform-origin:${visualOrigin};will-change:transform;display:flex;flex-direction:column;align-items:center;">
 
          <div class="map-avatar-marker${fullBody ? ' map-avatar-marker--fullbody' : ''}" style="display:flex;flex-direction:column;align-items:center;background:transparent;position:relative;will-change:transform;transform:translate3d(0,0,0);">
+
+           ${nameHtml}
 
            ${footRing}
 
@@ -5111,7 +5117,7 @@ export default function App() {
 
     let cancelled = false
 
-    userProfileRef.current = FALLBACK_PROFILE
+    // مەسڕەوەی پرۆفایلی ئێستا بۆ FALLBACK — ئەگەر کاش/قوفڵ هەیە دەمێنێتەوە
 
     const hydrateFromSnapshot = (uid: string, data: {
       gold: number
@@ -5162,15 +5168,27 @@ export default function App() {
         diamond: dataWithLock.diamond,
       })
       const prev = userProfileRef.current ?? FALLBACK_PROFILE
+      const authEmail = (() => {
+        try {
+          const e = auth.currentUser?.email
+          return typeof e === 'string' ? e.trim().toLowerCase() : ''
+        } catch { return '' }
+      })()
+      const authDisplay = (() => {
+        try {
+          const d = auth.currentUser?.displayName
+          return typeof d === 'string' ? d.trim() : ''
+        } catch { return '' }
+      })()
       const nextName = (typeof dataWithLock.name === 'string' && dataWithLock.name.trim() && dataWithLock.name.trim() !== 'یاریزان')
         ? dataWithLock.name.trim()
-        : (prev.name && prev.name !== 'یاریزان' ? prev.name : (dataWithLock.name || prev.name || 'یاریزان'))
+        : (prev.name && prev.name !== 'یاریزان' ? prev.name : (authDisplay || dataWithLock.name || prev.name || 'یاریزان'))
       const nextUsername = (typeof dataWithLock.username === 'string' && dataWithLock.username.trim())
         ? dataWithLock.username.trim()
         : (prev.username || '')
       const nextEmail = (typeof dataWithLock.email === 'string' && dataWithLock.email.trim())
         ? dataWithLock.email.trim()
-        : (prev.email || '')
+        : (prev.email || authEmail || '')
       const nextPhone = (typeof dataWithLock.phone === 'string' && dataWithLock.phone.trim())
         ? dataWithLock.phone.trim()
         : (prev.phone || '')
@@ -5773,27 +5791,31 @@ export default function App() {
       const nextPhone = (data.phone && data.phone.trim()) || lockedPhone
 
       // ئەگەر Firestore هێشتا بەتاڵە بەڵام ناسنامەمان هەیە — چاکی بکەرەوە و مەسڕەوە
-      if ((!nextUsername || !nextEmail) && lockedUsername && lockedEmail) {
+      if ((!nextUsername || !nextEmail || !nextPhone) && lockedUsername && (lockedEmail || lockedPhone)) {
         void repairUserIdentity(authUserId, {
           name: lockedName || lockedUsername,
           username: lockedUsername,
-          email: lockedEmail,
-          phone: lockedPhone,
+          email: lockedEmail || nextEmail,
+          phone: lockedPhone || nextPhone,
           gender: (lockedId?.gender || pending?.gender || prev?.gender || data.gender || 'male') as 'male' | 'female',
           playerId: data.playerId || prev?.playerId,
         }).catch(() => {})
       }
 
-      if (!nextUsername && !nextEmail && lockedUsername) {
+      // Snapshotی بەتاڵ مەنووسە بەسەر ناسنامەی قوفڵکراو / پێشوو
+      if (
+        (!nextUsername && !nextEmail && !nextPhone)
+        && (lockedUsername || lockedEmail || (prev && !isIdentityIncomplete(prev)))
+      ) {
         return
       }
 
       const merged = applyLockedIdentity(authUserId, {
         ...data,
         name: nextName,
-        username: nextUsername,
-        email: nextEmail,
-        phone: nextPhone,
+        username: nextUsername || prev?.username || '',
+        email: nextEmail || prev?.email || '',
+        phone: nextPhone || prev?.phone || '',
         gender: data.gender || lockedId?.gender || pending?.gender || prev?.gender || 'male',
         createdAtMs: data.createdAtMs ?? lockedId?.createdAtMs ?? pending?.createdAtMs ?? prev?.createdAtMs ?? null,
       })
@@ -5802,10 +5824,21 @@ export default function App() {
       if (isIdentityIncomplete(merged) && prev && !isIdentityIncomplete(prev)) {
         return
       }
-
-      userProfileRef.current = merged
-
-      setUserProfile(merged)
+      // تەنانەت ئەگەر هەردووک ناتەواون — مەسڕەوەی ئیمەیڵ/مۆبایلی پێشوو
+      if (prev && (prev.email || prev.phone || prev.username) && isIdentityIncomplete(merged)) {
+        const kept = {
+          ...merged,
+          name: (merged.name && merged.name !== 'یاریزان') ? merged.name : (prev.name || merged.name),
+          username: merged.username?.trim() || prev.username || '',
+          email: merged.email?.trim() || prev.email || '',
+          phone: merged.phone?.trim() || prev.phone || '',
+        }
+        userProfileRef.current = kept
+        setUserProfile(kept)
+      } else {
+        userProfileRef.current = merged
+        setUserProfile(merged)
+      }
 
       setWallet({
 
@@ -9699,7 +9732,7 @@ export default function App() {
 
           isSelected,
 
-          player.name,
+          showPlayerNamesRef.current ? (player.name || '') : null,
 
           motionPose,
 
@@ -10278,7 +10311,7 @@ export default function App() {
 
             isSelected,
 
-            player.name,
+            showPlayerNamesRef.current ? (player.name || '') : null,
 
             motionPose,
 
@@ -10459,7 +10492,7 @@ export default function App() {
         className: 'avatar-marker-clean',
         html: buildOnlinePlayerMarkerHtml(
           npc.uid, avatarUrl, hunterLvl, null, null, null, null, null,
-          0, 0, null, player.gender, moving, undefined, a3d, isSelected, player.name, motionPose,
+          0, 0, null, player.gender, moving, undefined, a3d, isSelected, showPlayerNamesRef.current ? (player.name || '') : null, motionPose,
         ),
         iconSize: PLAYER_MARKER_ICON_SIZE,
         iconAnchor: PLAYER_MARKER_ICON_ANCHOR,
@@ -12379,7 +12412,7 @@ export default function App() {
     const cos = cosmeticsToPublic(boughtItemsRef.current)
     realtimeSync.connect(authUserId, {
       uid: authUserId,
-      name: profile.name,
+      name: (profile.username?.trim() || profile.name || 'یاریزان'),
       gender: profile.gender,
       lat: userLatRef.current,
       lng: userLngRef.current,
