@@ -8,9 +8,17 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+node_modules_*/
+node_modules_broken*/
+node_modules_incomplete*/
 dist
 dist-ssr
 *.local
+
+# Large 3D character assets (keep local / CDN — do not commit)
+*.gltf
+*.glb
+!public/characters/README.md
 
 # Editor directories and files
 .vscode/*
